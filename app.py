@@ -7,6 +7,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -366,6 +367,83 @@ def _safe_float(value: float | None, default: float = 0.0) -> float:
     if value_f != value_f:
         return default
     return value_f
+
+
+def _render_price_structure_chart(
+    eod_df: pd.DataFrame,
+    selected_name: str,
+    selected_ticker: str,
+    selected_series: list[str],
+) -> None:
+    """Render a focused price chart with dynamic y-axis range."""
+    if not selected_series:
+        st.info("Select at least one series to render the chart.")
+        return
+
+    available_series = ["Close", "SMA_20", "EMA_20", "SMA_50"]
+    requested_series = [series for series in selected_series if series in available_series]
+    if not requested_series:
+        st.info("Selected series are unavailable for this chart.")
+        return
+
+    chart_df = eod_df[requested_series].copy().dropna(how="all")
+    if chart_df.empty:
+        st.info("Price chart is unavailable for this symbol.")
+        return
+
+    chart_df = chart_df.reset_index().rename(columns={"index": "Date"})
+    long_df = chart_df.melt(
+        id_vars=["Date"],
+        value_vars=requested_series,
+        var_name="Series",
+        value_name="Price",
+    ).dropna(subset=["Price"])
+
+    if long_df.empty:
+        st.info("Price chart is unavailable for this symbol.")
+        return
+
+    y_min = float(long_df["Price"].min())
+    y_max = float(long_df["Price"].max())
+    value_range = max(y_max - y_min, 1.0)
+    padding = max(value_range * 0.06, y_max * 0.003)
+    y_domain = [max(0.0, y_min - padding), y_max + padding]
+
+    st.subheader(f"Price Structure: {selected_name} ({selected_ticker})")
+    st.caption(f"Focused y-axis range: {y_domain[0]:.2f} to {y_domain[1]:.2f}")
+
+    series_colors = {
+        "Close": "#74c0fc",
+        "SMA_20": "#f97316",
+        "EMA_20": "#38bdf8",
+        "SMA_50": "#ef4444",
+    }
+    color_scale = alt.Scale(
+        domain=requested_series,
+        range=[series_colors[series] for series in requested_series],
+    )
+
+    chart = (
+        alt.Chart(long_df)
+        .mark_line(strokeWidth=2.2)
+        .encode(
+            x=alt.X("Date:T", title=None),
+            y=alt.Y(
+                "Price:Q",
+                title="Price",
+                scale=alt.Scale(domain=y_domain, zero=False),
+            ),
+            color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(orient="top")),
+            tooltip=[
+                alt.Tooltip("Date:T", title="Date"),
+                alt.Tooltip("Series:N", title="Series"),
+                alt.Tooltip("Price:Q", title="Price", format=",.2f"),
+            ],
+        )
+        .properties(height=320)
+        .interactive()
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1083,9 +1161,19 @@ def main() -> None:
             st.warning(
                 "Latest row is provisional (quote-patched) and may be revised when official EOD settles.")
 
-        chart_df = eod_df[["Close", "SMA_20", "EMA_20", "SMA_50"]].copy()
-        st.subheader(f"Price Structure: {selected_name} ({selected_ticker})")
-        st.line_chart(chart_df, use_container_width=True)
+        chart_series_options = ["Close", "SMA_20", "EMA_20", "SMA_50"]
+        selected_chart_series = st.multiselect(
+            "Visible chart series",
+            options=chart_series_options,
+            default=chart_series_options,
+            help="Toggle individual lines on the price chart.",
+        )
+        _render_price_structure_chart(
+            eod_df,
+            selected_name,
+            selected_ticker,
+            selected_chart_series,
+        )
 
         vcol1, vcol2 = st.columns([2, 1])
         with vcol1:

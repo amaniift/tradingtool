@@ -1,0 +1,107 @@
+# NSE EOD Analysis Dashboard
+
+## Project Structure
+
+```text
+tradingtool/
+├─ app.py                     # Streamlit frontend
+├─ requirements.txt           # Python dependencies
+├─ README.md
+└─ src/
+   ├─ __init__.py
+   └─ data/
+      ├─ __init__.py
+      └─ data_manager.py      # EOD fetch + technicals + news sentiment
+```
+
+## Quick Start
+
+1. Create and activate a Python 3.10+ environment.
+2. Install dependencies:
+   - `pip install -r requirements.txt`
+3. Run the app:
+   - `streamlit run app.py`
+
+## Highlights
+
+- Full NIFTY 50 stock universe in the selector.
+- Fresh EOD retrieval with explicit start/end date download and refresh control.
+- Multi-source latest data strategy: yfinance window + period + history, with NSE bhavcopy fallback and quote patching when needed.
+- Data lag monitor in UI to detect stale closes.
+- Multi-indicator technical stack:
+   - RSI (14)
+   - MACD (12, 26, 9)
+   - SMA (20), SMA (50), EMA (20)
+   - Daily return %
+- News sentiment:
+   - RSS from Economic Times + Moneycontrol
+   - Ticker alias matching and fallback headlines
+   - VADER sentiment scoring with pluggable scoring function
+- Recommendation engine:
+   - Weighted technical + sentiment score
+   - BUY/SELL/HOLD thresholds
+   - Confidence band + signal strength indicator
+- NIFTY 50 Pulse tab:
+   - Cross-sectional scan of all configured NIFTY 50 stocks
+   - Top BUY/SELL candidates with score ranking
+- Verdict tab:
+   - Generates top 3 next-session trade setups (BUY/SELL)
+   - Provides entry, target, and stop-loss for each setup
+   - Supports Aggressive/Moderate/Conservative policy modes
+   - Adds position sizing from account capital and risk-per-trade
+   - Allows CSV download and verdict run audit logging
+   - Uses score ranking plus ATR-based risk-reward logic
+- Backtest tab:
+   - Uses logged recommendation snapshots
+   - Maps each signal to next trading day
+   - Hit-rate, average return, cumulative return, and breakdown tables
+- Modernized Streamlit UI with custom typography, gradient hero card, and improved information hierarchy.
+
+## Current Logic
+
+- EOD data uses `yfinance` with NSE tickers like `RELIANCE.NS`.
+- Data reliability enhancements:
+   - Attempts official NSE bhavcopy patch for latest finalized day
+   - If latest historical close is missing, patches from quote fields as provisional data
+   - Adds `DATA_SOURCE` and `IS_PROVISIONAL` columns in the returned EOD frame
+- Technical indicators computed in `fetch_eod_data`:
+  - RSI (14)
+  - MACD (12, 26, 9)
+   - SMA (20), SMA (50), EMA (20)
+   - Daily return (%)
+   - Uses `pandas-ta` when available, otherwise falls back to a pure-pandas implementation
+- News sentiment in `fetch_news_sentiment`:
+   - Attempts live RSS ingestion from Economic Times and Moneycontrol feeds
+   - Filters headlines by expanded ticker aliases (company names, symbols, common variants)
+   - Falls back to ticker-specific or generic mock headlines if no RSS matches are found
+   - Scores headlines using VADER (`scorer` is injectable for easy LLM replacement)
+- Recommendation logic in `app.py`:
+   - Technical score uses RSI, MACD-vs-Signal, and trend-vs-SMA20
+   - Combined score = `0.65 * technical_score + 0.35 * avg_news_sentiment`
+   - BUY if score >= 0.25, SELL if score <= -0.25, else HOLD
+   - Confidence band is derived from score magnitude and headline count
+- Verdict engine logic in `app.py`:
+   - Scores all NIFTY 50 stocks using RSI, MACD spread, trend regime, and 5-day momentum
+   - Selects high-conviction BUY/SELL candidates by score threshold
+   - Computes entry near current close and sets target/stop-loss using ATR-based risk bands
+   - Applies policy-mode thresholds and ATR multipliers (Aggressive/Moderate/Conservative)
+   - Calculates quantity using fixed risk budget per trade
+   - Returns the top 3 setups by score strength and risk-reward quality
+
+## Backtesting Log
+
+- Click **Log Recommendation Snapshot** in the app to append current signal data.
+- Logged file: `data/recommendation_log.csv`
+- Fields include timestamp, ticker, recommendation, confidence, technical/sentiment scores, RSI, MACD, and news source.
+
+## Verdict Log
+
+- Click **Log Verdict Run** in the Verdict tab after generating setups.
+- Logged file: `data/verdict_log.csv`
+- Includes policy, capital, risk-per-trade, entry/target/stop, quantity, and projected PnL values.
+
+## Next Upgrade Ideas
+
+- Add more Indian finance/news RSS providers and source-level weighting.
+- Replace VADER with an LLM API backend for context-aware sentiment.
+- Add portfolio-level simulation (position sizing, costs, slippage).

@@ -1,0 +1,2 @@
+generated_at,policy,account_capital,risk_per_trade_pct,company,ticker,side,score,close,entry,target,stop_loss,rr_ratio,rsi_14,macd_spread,atr_14,data_source,bar_status,qty,capital_used,expected_profit_at_target,expected_loss_at_stop
+2026-04-22T09:02:41,Moderate,500000,1.0,Power Grid,POWERGRID.NS,BUY,1.0,319.35,319.67,333.63,311.14,1.64,71.13,2.379,7.75,yfinance,Final,586,187326.62,8180.56,4998.58

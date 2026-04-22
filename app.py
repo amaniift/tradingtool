@@ -671,6 +671,146 @@ def _compute_atr(df: pd.DataFrame, period: int = 14) -> float:
     return float(atr)
 
 
+def _cluster_price_points(
+    points: list[tuple[pd.Timestamp, float]],
+    tolerance: float,
+) -> list[dict[str, object]]:
+    """Cluster nearby swing points into stable price bands."""
+    if not points:
+        return []
+
+    clusters: list[dict[str, object]] = []
+    for point_date, point_price in sorted(points, key=lambda item: item[1]):
+        placed = False
+        for cluster in clusters:
+            if abs(point_price - float(cluster["level"])) <= tolerance:
+                cluster_points = cluster["points"]
+                cluster_points.append((point_date, point_price))
+                level_prices = [price for _, price in cluster_points]
+                cluster["level"] = sum(level_prices) / len(level_prices)
+                cluster["points"] = cluster_points
+                placed = True
+                break
+
+        if not placed:
+            clusters.append(
+                {
+                    "level": point_price,
+                    "points": [(point_date, point_price)],
+                }
+            )
+
+    return clusters
+
+
+def _calculate_support_resistance_levels(
+    eod_df: pd.DataFrame,
+    current_close: float,
+    lookback_days: int = 120,
+    pivot_window: int = 3,
+    max_levels: int = 3,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Estimate support and resistance using clustered swing pivots.
+
+    The calculation uses recent swing highs/lows, ATR-aware clustering,
+    and touch/recency scoring so the output focuses on levels that have
+    been respected more than once instead of isolated extremes.
+    """
+    required_cols = {"High", "Low", "Close"}
+    if eod_df.empty or not required_cols.issubset(set(eod_df.columns)):
+        return pd.DataFrame(), pd.DataFrame()
+
+    recent_df = eod_df.tail(min(len(eod_df), lookback_days)).copy()
+    if len(recent_df) < (pivot_window * 2) + 1 or current_close <= 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    recent_high = recent_df["High"].astype(float)
+    recent_low = recent_df["Low"].astype(float)
+    atr = _compute_atr(recent_df, period=min(14, max(5, len(recent_df) // 4)))
+    tolerance = max(current_close * 0.006, atr * 0.6 if atr > 0 else current_close * 0.006)
+    window_size = (pivot_window * 2) + 1
+
+    low_roll = recent_low.rolling(window=window_size, center=True).min()
+    high_roll = recent_high.rolling(window=window_size, center=True).max()
+
+    support_points: list[tuple[pd.Timestamp, float]] = []
+    resistance_points: list[tuple[pd.Timestamp, float]] = []
+
+    for idx, low_price in recent_low.items():
+        roll_value = low_roll.loc[idx]
+        if pd.notna(roll_value) and float(low_price) <= float(roll_value) + 1e-9:
+            support_points.append((pd.Timestamp(idx), float(low_price)))
+
+    for idx, high_price in recent_high.items():
+        roll_value = high_roll.loc[idx]
+        if pd.notna(roll_value) and float(high_price) >= float(roll_value) - 1e-9:
+            resistance_points.append((pd.Timestamp(idx), float(high_price)))
+
+    def _build_levels(
+        points: list[tuple[pd.Timestamp, float]],
+        side: str,
+    ) -> pd.DataFrame:
+        clusters = _cluster_price_points(points, tolerance)
+        level_rows: list[dict[str, object]] = []
+
+        for cluster in clusters:
+            cluster_points = cluster["points"]
+            cluster_level = float(cluster["level"])
+            if side == "support" and cluster_level >= current_close:
+                continue
+            if side == "resistance" and cluster_level <= current_close:
+                continue
+
+            weighted_prices = []
+            weighted_scores = []
+            for point_date, point_price in cluster_points:
+                age_days = max((recent_df.index[-1] - pd.Timestamp(point_date)).days, 0)
+                recency_weight = 1.0 + max(0.0, (lookback_days - age_days) / lookback_days)
+                weighted_prices.append(point_price * recency_weight)
+                weighted_scores.append(recency_weight)
+
+            cluster_level = sum(weighted_prices) / sum(weighted_scores)
+            if side == "support":
+                side_series = recent_low
+                distance_pct = ((current_close - cluster_level) / current_close) * 100.0
+            else:
+                side_series = recent_high
+                distance_pct = ((cluster_level - current_close) / current_close) * 100.0
+
+            touch_mask = (side_series.sub(cluster_level).abs() <= tolerance)
+            touch_count = int(touch_mask.sum())
+            if touch_count == 0:
+                continue
+
+            last_actual_touch = recent_df.index[touch_mask].max()
+            last_touch_days = int((recent_df.index[-1] - last_actual_touch).days)
+            recency_bonus = max(0.0, 1.0 - (last_touch_days / max(lookback_days, 1)))
+            strength = (touch_count * (1.0 + recency_bonus)) + (len(cluster_points) * 0.35)
+
+            level_rows.append(
+                {
+                    "Level Type": side.title(),
+                    "Level": round(cluster_level, 2),
+                    "Distance to Close (%)": round(distance_pct, 2),
+                    "Touches": touch_count,
+                    "Last Touch": pd.Timestamp(last_actual_touch).date().isoformat(),
+                    "Strength": round(strength, 2),
+                }
+            )
+
+        if not level_rows:
+            return pd.DataFrame()
+
+        levels_df = pd.DataFrame(level_rows)
+        if side == "support":
+            levels_df = levels_df.sort_values("Level", ascending=False)
+        else:
+            levels_df = levels_df.sort_values("Level", ascending=True)
+        return levels_df.head(max_levels).reset_index(drop=True)
+
+    return _build_levels(support_points, "support"), _build_levels(resistance_points, "resistance")
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def build_verdict_candidates(
     days: int,
@@ -959,6 +1099,78 @@ def main() -> None:
                 "20D SMA", f"{_safe_float(latest.get('SMA_20'), 0.0):.2f}")
             st.metric(
                 "50D SMA", f"{_safe_float(latest.get('SMA_50'), 0.0):.2f}")
+
+        support_df, resistance_df = _calculate_support_resistance_levels(
+            eod_df,
+            close_value,
+            lookback_days=min(len(eod_df), 120),
+            pivot_window=3,
+            max_levels=3,
+        )
+
+        st.subheader("Support & Resistance Map")
+        st.caption(
+            "Derived from recent swing highs/lows, grouped into ATR-aware price bands, then ranked by touches and recency."
+        )
+
+        if support_df.empty and resistance_df.empty:
+            st.info("Not enough repeated swing points yet to estimate stable support and resistance levels.")
+        else:
+            summary_cols = st.columns(4)
+            top_support = support_df.iloc[0] if not support_df.empty else None
+            top_resistance = resistance_df.iloc[0] if not resistance_df.empty else None
+
+            summary_cols[0].metric(
+                "Nearest Support",
+                f"{float(top_support['Level']):.2f}" if top_support is not None else "N/A",
+                f"{float(top_support['Distance to Close (%)']):.2f}% below" if top_support is not None else "",
+            )
+            summary_cols[1].metric(
+                "Support Strength",
+                f"{float(top_support['Strength']):.2f}" if top_support is not None else "N/A",
+                f"{int(top_support['Touches'])} touch(es)" if top_support is not None else "",
+            )
+            summary_cols[2].metric(
+                "Nearest Resistance",
+                f"{float(top_resistance['Level']):.2f}" if top_resistance is not None else "N/A",
+                f"{float(top_resistance['Distance to Close (%)']):.2f}% above" if top_resistance is not None else "",
+            )
+            summary_cols[3].metric(
+                "Resistance Strength",
+                f"{float(top_resistance['Strength']):.2f}" if top_resistance is not None else "N/A",
+                f"{int(top_resistance['Touches'])} touch(es)" if top_resistance is not None else "",
+            )
+
+            level_frames = []
+            if not support_df.empty:
+                level_frames.append(support_df)
+            if not resistance_df.empty:
+                level_frames.append(resistance_df)
+
+            if level_frames:
+                levels_df = pd.concat(level_frames, ignore_index=True)
+                levels_df = levels_df.sort_values(
+                    ["Level Type", "Distance to Close (%)"],
+                    ascending=[True, True],
+                )
+                st.dataframe(
+                    levels_df.style.format(
+                        {
+                            "Level": "{:.2f}",
+                            "Distance to Close (%)": "{:.2f}",
+                            "Strength": "{:.2f}",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            with st.expander("How the levels are derived"):
+                st.markdown(
+                    """
+                    The dashboard uses a recent lookback window of daily OHLC bars, finds swing highs and lows with a centered pivot filter, clusters nearby prices using an ATR-aware tolerance band, and then ranks each cluster by the number of touches and how recently it was respected.
+                    """
+                )
 
         indicator_df = (
             latest[["Close", "RSI_14", "MACD", "MACD_SIGNAL",

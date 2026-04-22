@@ -898,8 +898,10 @@ def main() -> None:
                     "No high-conviction setups found for current settings.")
             else:
                 total_capital_used = float(verdict_df["capital_used"].sum())
-                total_expected_profit = float(verdict_df["expected_profit_at_target"].sum())
-                total_expected_loss = float(verdict_df["expected_loss_at_stop"].sum())
+                total_expected_profit = float(
+                    verdict_df["expected_profit_at_target"].sum())
+                total_expected_loss = float(
+                    verdict_df["expected_loss_at_stop"].sum())
                 weighted_rr = (
                     total_expected_profit / total_expected_loss
                     if total_expected_loss > 0
@@ -907,9 +909,12 @@ def main() -> None:
                 )
 
                 summary_cols = st.columns(4)
-                summary_cols[0].metric("Total Capital Used", f"{total_capital_used:.2f}")
-                summary_cols[1].metric("Portfolio Loss @ Stops", f"{total_expected_loss:.2f}")
-                summary_cols[2].metric("Portfolio Profit @ Targets", f"{total_expected_profit:.2f}")
+                summary_cols[0].metric(
+                    "Total Capital Used", f"{total_capital_used:.2f}")
+                summary_cols[1].metric(
+                    "Portfolio Loss @ Stops", f"{total_expected_loss:.2f}")
+                summary_cols[2].metric(
+                    "Portfolio Profit @ Targets", f"{total_expected_profit:.2f}")
                 summary_cols[3].metric("Portfolio R:R", f"{weighted_rr:.2f}")
 
                 for idx, row in verdict_df.iterrows():

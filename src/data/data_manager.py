@@ -12,19 +12,27 @@ from typing import Callable, Dict, List
 import feedparser
 import pandas as pd
 import requests
-import yfinance as yf
 from requests.exceptions import SSLError
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+from curl_cffi import requests as curl_requests
 
 try:
     import certifi
 except ImportError:
     certifi = None
 
+if certifi is not None:
+    ca_bundle = certifi.where()
+    os.environ.setdefault("SSL_CERT_FILE", ca_bundle)
+    os.environ.setdefault("CURL_CA_BUNDLE", ca_bundle)
+
 try:
     import pandas_ta as ta
 except ImportError:
     ta = None
+
+import yfinance as yf
 
 
 MOCK_NEWS_BY_TICKER: Dict[str, List[str]] = {
@@ -113,6 +121,13 @@ NSE_HEADERS = {
 
 _BHAVCOPY_CACHE: Dict[str, pd.DataFrame] = {}
 _REQUESTS_VERIFY: str | bool = certifi.where() if certifi is not None else True
+_YFINANCE_VERIFY: str | bool = False
+_YFINANCE_SESSION = curl_requests.Session(impersonate="chrome", verify=_YFINANCE_VERIFY)
+
+
+def get_yfinance_session() -> curl_requests.Session:
+    """Return the shared verified curl-cffi session used for yfinance calls."""
+    return _YFINANCE_SESSION
 
 
 def _configure_ssl_certs() -> None:
@@ -198,7 +213,7 @@ def fetch_eod_data(ticker: str, days: int = 30) -> pd.DataFrame:
         if not fallback_df.empty:
             frames.append(fallback_df)
         else:
-            frames.append(_build_synthetic_history(ticker, lookback_days))
+            return pd.DataFrame()
 
     if not frames:
         return pd.DataFrame()
@@ -225,9 +240,7 @@ def fetch_eod_data(ticker: str, days: int = 30) -> pd.DataFrame:
     if price_df.empty:
         price_df = _build_bhavcopy_history(ticker, lookback_days)
         if price_df.empty:
-            price_df = _build_synthetic_history(ticker, lookback_days)
-            if price_df.empty:
-                return pd.DataFrame()
+            return pd.DataFrame()
 
     price_df["SMA_20"] = price_df["Close"].rolling(20).mean()
     price_df["SMA_50"] = price_df["Close"].rolling(50).mean()
@@ -274,6 +287,7 @@ def _download_yfinance_history(
             progress=False,
             auto_adjust=False,
             threads=False,
+            session=_YFINANCE_SESSION,
         )
     except Exception:
         return pd.DataFrame()
@@ -282,7 +296,7 @@ def _download_yfinance_history(
 def _download_ticker_history(ticker: str, period: str) -> pd.DataFrame:
     """Download ticker history while swallowing transport-level failures."""
     try:
-        return yf.Ticker(ticker).history(
+        return yf.Ticker(ticker, session=_YFINANCE_SESSION).history(
             period=period,
             interval="1d",
             auto_adjust=False,
@@ -321,7 +335,7 @@ def _patch_latest_quote_row(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if pd.notna(latest_close):
         return out
 
-    fast = getattr(yf.Ticker(ticker), "fast_info", None)
+    fast = getattr(yf.Ticker(ticker, session=_YFINANCE_SESSION), "fast_info", None)
     if fast is None or not hasattr(fast, "get"):
         return out
 

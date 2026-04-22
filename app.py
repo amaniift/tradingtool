@@ -9,9 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import yfinance as yf
 
-from src.data.data_manager import fetch_eod_data, fetch_news_sentiment
+from src.data.data_manager import fetch_eod_data, fetch_news_sentiment, get_yfinance_session
 
 
 NIFTY_50_STOCKS = {
@@ -473,6 +472,8 @@ def fetch_price_history_for_backtest(
     end_date: str,
 ) -> pd.Series:
     """Fetch close-price history for backtest outcome mapping."""
+    import yfinance as yf
+
     price_df = yf.download(
         ticker,
         start=start_date,
@@ -481,6 +482,7 @@ def fetch_price_history_for_backtest(
         progress=False,
         auto_adjust=False,
         threads=False,
+        session=get_yfinance_session(),
     )
     if price_df.empty:
         return pd.Series(dtype="float64")

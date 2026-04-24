@@ -11,7 +11,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from src.data.data_manager import fetch_eod_data, fetch_news_sentiment, get_yfinance_session
+from src.data.data_manager import fetch_eod_data, fetch_news_sentiment, get_yfinance_session, _YFINANCE_SESSION
 
 
 NIFTY_50_STOCKS = {
@@ -891,6 +891,138 @@ def _calculate_support_resistance_levels(
     return _build_levels(support_points, "support"), _build_levels(resistance_points, "resistance")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_nifty50_index_data(days: int) -> pd.DataFrame:
+    """Fetch NIFTY 50 index data with technical indicators."""
+    import yfinance as yf
+
+    index_ticker = "^NSEI"
+
+    try:
+        index_df = yf.download(
+            index_ticker,
+            start=(pd.Timestamp.today() - pd.Timedelta(days=days + 30)).strftime("%Y-%m-%d"),
+            end=pd.Timestamp.today().strftime("%Y-%m-%d"),
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+            session=_YFINANCE_SESSION,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    if index_df.empty:
+        return pd.DataFrame()
+
+    if isinstance(index_df.columns, pd.MultiIndex):
+        index_df.columns = index_df.columns.get_level_values(0)
+
+    index_df = index_df.dropna(subset=["Close"])
+
+    if "Volume" not in index_df.columns:
+        index_df["Volume"] = 0
+
+    close_series = index_df["Close"].astype(float)
+    high_series = index_df["High"].astype(float) if "High" in index_df else close_series
+    low_series = index_df["Low"].astype(float) if "Low" in index_df else close_series
+
+    delta = close_series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    index_df["RSI_14"] = rsi
+
+    ema12 = close_series.ewm(span=12, adjust=False).mean()
+    ema26 = close_series.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    index_df["MACD"] = macd
+    index_df["MACD_SIGNAL"] = signal
+    index_df["MACD_HIST"] = macd - signal
+
+    sma20 = close_series.rolling(window=20).mean()
+    sma50 = close_series.rolling(window=50).mean()
+    ema20 = close_series.ewm(span=20, adjust=False).mean()
+    index_df["SMA_20"] = sma20
+    index_df["SMA_50"] = sma50
+    index_df["EMA_20"] = ema20
+
+    daily_return = close_series.pct_change() * 100
+    index_df["DAILY_RETURN_PCT"] = daily_return
+
+    return index_df
+
+
+def calculate_market_breadth(df: pd.DataFrame) -> dict:
+    """Calculate basic market breadth indicators from index data."""
+    if df.empty or len(df) < 20:
+        return {
+            "advance_decline_ratio": "N/A",
+            "new_highs_lows": "N/A",
+            "percent_above_sma20": "N/A",
+            "percent_above_sma50": "N/A",
+            "trend_strength": "N/A",
+        }
+
+    close = df["Close"].astype(float)
+
+    sma20 = close.rolling(20).mean()
+    sma50 = close.rolling(50).mean()
+
+    above_sma20 = (close > sma20).sum()
+    above_sma50 = (close > sma50).sum()
+    total = len(close.dropna())
+
+    pct_above_20 = (above_sma20 / total * 100) if total > 0 else 0
+    pct_above_50 = (above_sma50 / total * 100) if total > 0 else 0
+
+    recent_returns = df["DAILY_RETURN_PCT"].tail(5) if "DAILY_RETURN_PCT" in df else pd.Series()
+    trend_strength = "Strong" if recent_returns.mean() > 0.5 else "Weak" if recent_returns.mean() < -0.5 else "Neutral"
+
+    return {
+        "percent_above_sma20": f"{pct_above_20:.1f}%",
+        "percent_above_sma50": f"{pct_above_50:.1f}%",
+        "trend_strength": trend_strength,
+        "5day_momentum": f"{recent_returns.sum():.2f}%" if not recent_returns.empty else "N/A",
+    }
+
+
+def _calculate_next_session_pivots(index_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute classical pivot levels for the next trading session from latest OHLC."""
+    required_cols = {"High", "Low", "Close"}
+    if index_df.empty or not required_cols.issubset(index_df.columns):
+        return pd.DataFrame()
+
+    latest_bar = index_df.iloc[-1]
+    high_value = _safe_float(latest_bar.get("High"), 0.0)
+    low_value = _safe_float(latest_bar.get("Low"), 0.0)
+    close_value = _safe_float(latest_bar.get("Close"), 0.0)
+
+    if high_value <= 0 or low_value <= 0 or close_value <= 0:
+        return pd.DataFrame()
+
+    pivot = (high_value + low_value + close_value) / 3.0
+    spread = high_value - low_value
+
+    levels = [
+        {"Level": "R3", "Price": high_value + 2.0 * (pivot - low_value)},
+        {"Level": "R2", "Price": pivot + spread},
+        {"Level": "R1", "Price": (2.0 * pivot) - low_value},
+        {"Level": "Pivot", "Price": pivot},
+        {"Level": "S1", "Price": (2.0 * pivot) - high_value},
+        {"Level": "S2", "Price": pivot - spread},
+        {"Level": "S3", "Price": low_value - 2.0 * (high_value - pivot)},
+    ]
+
+    pivot_df = pd.DataFrame(levels)
+    pivot_df["Distance to Close (%)"] = ((pivot_df["Price"] - close_value) / close_value) * 100.0
+    return pivot_df
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def build_verdict_candidates(
     days: int,
@@ -1108,8 +1240,8 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
 
-    signal_tab, pulse_tab, verdict_tab, backtest_tab = st.tabs(
-        ["Signal Dashboard", "NIFTY 50 Pulse", "Verdict", "Backtest"])
+    signal_tab, pulse_tab, verdict_tab, backtest_tab, nifty_analysis_tab = st.tabs(
+        ["Signal Dashboard", "NIFTY 50 Pulse", "Verdict", "Backtest", "NIFTY 50 Analysis"])
 
     with signal_tab:
         eod_df = get_eod_cached(selected_ticker, days=days)
@@ -1474,70 +1606,309 @@ def main() -> None:
         if log_df.empty:
             st.info(
                 "No recommendation snapshots found yet. Log a few snapshots first.")
-            return
+        else:
+            filter_cols = st.columns(2)
+            ticker_filter = filter_cols[0].selectbox(
+                "Filter ticker", ["All"] + sorted(log_df["ticker"].dropna().unique().tolist()))
+            conf_filter = filter_cols[1].selectbox("Filter confidence", [
+                                                   "All"] + sorted(log_df["confidence"].dropna().unique().tolist()))
 
-        filter_cols = st.columns(2)
-        ticker_filter = filter_cols[0].selectbox(
-            "Filter ticker", ["All"] + sorted(log_df["ticker"].dropna().unique().tolist()))
-        conf_filter = filter_cols[1].selectbox("Filter confidence", [
-                                               "All"] + sorted(log_df["confidence"].dropna().unique().tolist()))
+            if ticker_filter != "All":
+                log_df = log_df[log_df["ticker"] == ticker_filter]
+            if conf_filter != "All":
+                log_df = log_df[log_df["confidence"] == conf_filter]
 
-        if ticker_filter != "All":
-            log_df = log_df[log_df["ticker"] == ticker_filter]
-        if conf_filter != "All":
-            log_df = log_df[log_df["confidence"] == conf_filter]
+            backtest_df = build_backtest_results(log_df)
+            if backtest_df.empty:
+                st.warning(
+                    "No rows could be mapped to next-trading-day outcomes yet.")
+                st.dataframe(log_df.tail(25), use_container_width=True)
+            else:
+                total_signals = int(len(backtest_df.index))
+                hit_rate = float(backtest_df["is_hit"].mean()
+                                 ) if total_signals else 0.0
+                avg_strategy_return = float(
+                    backtest_df["strategy_return"].mean()) if total_signals else 0.0
+                cumulative_return = float(
+                    (1 + backtest_df["strategy_return"]).prod() - 1) if total_signals else 0.0
+                best_signal = backtest_df.loc[backtest_df["strategy_return"].idxmax()]
 
-        backtest_df = build_backtest_results(log_df)
-        if backtest_df.empty:
-            st.warning(
-                "No rows could be mapped to next-trading-day outcomes yet.")
-            st.dataframe(log_df.tail(25), use_container_width=True)
-            return
+                metric_cols = st.columns(5)
+                metric_cols[0].metric("Signals Backtested", f"{total_signals}")
+                metric_cols[1].metric("Hit Rate", f"{hit_rate * 100:.1f}%")
+                metric_cols[2].metric("Avg Strategy Return",
+                                      f"{avg_strategy_return * 100:.2f}%")
+                metric_cols[3].metric("Cumulative Return",
+                                      f"{cumulative_return * 100:.2f}%")
+                metric_cols[4].metric(
+                    "Best Signal", f"{best_signal['ticker']} ({best_signal['strategy_return'] * 100:.2f}%)")
 
-        total_signals = int(len(backtest_df.index))
-        hit_rate = float(backtest_df["is_hit"].mean()
-                         ) if total_signals else 0.0
-        avg_strategy_return = float(
-            backtest_df["strategy_return"].mean()) if total_signals else 0.0
-        cumulative_return = float(
-            (1 + backtest_df["strategy_return"]).prod() - 1) if total_signals else 0.0
-        best_signal = backtest_df.loc[backtest_df["strategy_return"].idxmax()]
+                breakdown_df = (
+                    backtest_df.groupby("recommendation", as_index=False)
+                    .agg(
+                        signals=("recommendation", "count"),
+                        hit_rate=("is_hit", "mean"),
+                        avg_return=("strategy_return", "mean"),
+                    )
+                    .sort_values("recommendation")
+                )
+                breakdown_df["hit_rate"] = (breakdown_df["hit_rate"] * 100).round(2)
+                breakdown_df["avg_return"] = (
+                    breakdown_df["avg_return"] * 100).round(2)
 
-        metric_cols = st.columns(5)
-        metric_cols[0].metric("Signals Backtested", f"{total_signals}")
-        metric_cols[1].metric("Hit Rate", f"{hit_rate * 100:.1f}%")
-        metric_cols[2].metric("Avg Strategy Return",
-                              f"{avg_strategy_return * 100:.2f}%")
-        metric_cols[3].metric("Cumulative Return",
-                              f"{cumulative_return * 100:.2f}%")
-        metric_cols[4].metric(
-            "Best Signal", f"{best_signal['ticker']} ({best_signal['strategy_return'] * 100:.2f}%)")
+                st.markdown("### Performance by Recommendation")
+                st.dataframe(breakdown_df, use_container_width=True)
 
-        breakdown_df = (
-            backtest_df.groupby("recommendation", as_index=False)
-            .agg(
-                signals=("recommendation", "count"),
-                hit_rate=("is_hit", "mean"),
-                avg_return=("strategy_return", "mean"),
+                display_df = backtest_df.sort_values(
+                    "timestamp", ascending=False).copy()
+                display_df["next_day_return"] = (
+                    display_df["next_day_return"] * 100).round(2)
+                display_df["strategy_return"] = (
+                    display_df["strategy_return"] * 100).round(2)
+
+                st.markdown("### Signal-Level Backtest Rows")
+                st.dataframe(display_df, use_container_width=True)
+
+    with nifty_analysis_tab:
+        st.subheader("NIFTY 50 Index Analysis")
+        st.caption("Live index data, technical indicators, support/resistance, and market breadth.")
+
+        index_days = st.slider("Index lookback days", min_value=30, max_value=180, value=60, key="index_days")
+
+        with st.spinner("Fetching NIFTY 50 index data..."):
+            index_df = fetch_nifty50_index_data(days=index_days)
+
+        if index_df.empty:
+            st.error("Unable to fetch NIFTY 50 index data. Please try again later.")
+        else:
+            latest_idx = index_df.iloc[-1]
+            close_value = _safe_float(latest_idx.get("Close"), 0.0)
+            prev_close = _safe_float(index_df.iloc[-2].get("Close"), close_value) if len(index_df) >= 2 else close_value
+            day_change_pct = ((close_value - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+
+            rsi_value = _safe_float(latest_idx.get("RSI_14"), 50.0)
+            macd_value = _safe_float(latest_idx.get("MACD"), 0.0)
+            macd_signal_value = _safe_float(latest_idx.get("MACD_SIGNAL"), 0.0)
+            sma_20_value = _safe_float(latest_idx.get("SMA_20"), close_value)
+            sma_50_value = _safe_float(latest_idx.get("SMA_50"), close_value)
+            ema_20_value = _safe_float(latest_idx.get("EMA_20"), close_value)
+
+            latest_date = pd.to_datetime(index_df.index[-1]).date()
+
+            st.markdown(f"**Last Updated:** {latest_date}")
+            st.markdown("---")
+
+            metric_cols = st.columns(6)
+            metric_cols[0].metric("NIFTY 50", f"{close_value:.2f}")
+            metric_cols[1].metric("1D Change", f"{day_change_pct:.2f}%")
+            metric_cols[2].metric("RSI (14)", f"{rsi_value:.2f}")
+            metric_cols[3].metric("MACD", f"{macd_value:.2f}")
+            metric_cols[4].metric("MACD Signal", f"{macd_signal_value:.2f}")
+            metric_cols[5].metric("MACD Hist", f"{_safe_float(latest_idx.get('MACD_HIST'), 0.0):.2f}")
+
+            st.markdown("#### Moving Averages")
+            ma_cols = st.columns(4)
+            ma_cols[0].metric("SMA (20)", f"{sma_20_value:.2f}")
+            ma_cols[1].metric("SMA (50)", f"{sma_50_value:.2f}")
+            ma_cols[2].metric("EMA (20)", f"{ema_20_value:.2f}")
+            ma_cols[3].metric("Distance to SMA20", f"{((close_value - sma_20_value) / sma_20_value * 100):.2f}%")
+
+            support_df, resistance_df = _calculate_support_resistance_levels(
+                index_df,
+                close_value,
+                lookback_days=min(len(index_df), 120),
+                pivot_window=3,
+                max_levels=3,
             )
-            .sort_values("recommendation")
-        )
-        breakdown_df["hit_rate"] = (breakdown_df["hit_rate"] * 100).round(2)
-        breakdown_df["avg_return"] = (
-            breakdown_df["avg_return"] * 100).round(2)
 
-        st.markdown("### Performance by Recommendation")
-        st.dataframe(breakdown_df, use_container_width=True)
+            st.markdown("#### Support & Resistance")
+            if support_df.empty and resistance_df.empty:
+                st.info("Not enough data to calculate support and resistance levels.")
+            else:
+                sr_cols = st.columns(4)
+                top_support = support_df.iloc[0] if not support_df.empty else None
+                top_resistance = resistance_df.iloc[0] if not resistance_df.empty else None
 
-        display_df = backtest_df.sort_values(
-            "timestamp", ascending=False).copy()
-        display_df["next_day_return"] = (
-            display_df["next_day_return"] * 100).round(2)
-        display_df["strategy_return"] = (
-            display_df["strategy_return"] * 100).round(2)
+                sr_cols[0].metric(
+                    "Nearest Support",
+                    f"{float(top_support['Level']):.2f}" if top_support is not None else "N/A",
+                    f"{float(top_support['Distance to Close (%)']):.2f}% below" if top_support is not None else "",
+                )
+                sr_cols[1].metric(
+                    "Support Strength",
+                    f"{float(top_support['Strength']):.2f}" if top_support is not None else "N/A",
+                    f"{int(top_support['Touches'])} touches" if top_support is not None else "",
+                )
+                sr_cols[2].metric(
+                    "Nearest Resistance",
+                    f"{float(top_resistance['Level']):.2f}" if top_resistance is not None else "N/A",
+                    f"{float(top_resistance['Distance to Close (%)']):.2f}% above" if top_resistance is not None else "",
+                )
+                sr_cols[3].metric(
+                    "Resistance Strength",
+                    f"{float(top_resistance['Strength']):.2f}" if top_resistance is not None else "N/A",
+                    f"{int(top_resistance['Touches'])} touches" if top_resistance is not None else "",
+                )
 
-        st.markdown("### Signal-Level Backtest Rows")
-        st.dataframe(display_df, use_container_width=True)
+                all_levels = []
+                if not support_df.empty:
+                    all_levels.append(support_df)
+                if not resistance_df.empty:
+                    all_levels.append(resistance_df)
+
+                if all_levels:
+                    levels_combined = pd.concat(all_levels, ignore_index=True)
+                    levels_combined = levels_combined.sort_values(["Level Type", "Level"], ascending=[True, False])
+                    st.dataframe(levels_combined.style.format({
+                        "Level": "{:.2f}",
+                        "Distance to Close (%)": "{:.2f}",
+                        "Strength": "{:.2f}",
+                    }), use_container_width=True, hide_index=True)
+
+            next_session_levels = _calculate_next_session_pivots(index_df)
+            st.markdown("#### Next Trading Session Levels (Pivot-Based)")
+            st.caption("Derived from the latest completed NIFTY 50 OHLC bar for the next session's intraday reference.")
+            if next_session_levels.empty:
+                st.info("Next-session pivot levels are unavailable due to missing OHLC data.")
+            else:
+                pivot_row = next_session_levels[next_session_levels["Level"] == "Pivot"]
+                r1_row = next_session_levels[next_session_levels["Level"] == "R1"]
+                s1_row = next_session_levels[next_session_levels["Level"] == "S1"]
+
+                pivot_value = float(pivot_row.iloc[0]["Price"]) if not pivot_row.empty else 0.0
+                r1_value = float(r1_row.iloc[0]["Price"]) if not r1_row.empty else 0.0
+                s1_value = float(s1_row.iloc[0]["Price"]) if not s1_row.empty else 0.0
+
+                next_cols = st.columns(3)
+                next_cols[0].metric("Pivot", f"{pivot_value:.2f}")
+                next_cols[1].metric("Nearest Resistance (R1)", f"{r1_value:.2f}")
+                next_cols[2].metric("Nearest Support (S1)", f"{s1_value:.2f}")
+
+                ordered_levels = ["R3", "R2", "R1", "Pivot", "S1", "S2", "S3"]
+                next_session_levels["order_key"] = next_session_levels["Level"].map(
+                    {name: idx for idx, name in enumerate(ordered_levels)}
+                )
+                next_session_levels = next_session_levels.sort_values("order_key").drop(columns=["order_key"])
+
+                st.dataframe(
+                    next_session_levels.style.format(
+                        {
+                            "Price": "{:.2f}",
+                            "Distance to Close (%)": "{:.2f}",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            breadth = calculate_market_breadth(index_df)
+
+            st.markdown("#### Market Breadth Indicators")
+            st.caption("Based on index historical data and momentum")
+            breadth_cols = st.columns(4)
+            breadth_cols[0].metric("% Above SMA20", breadth.get("percent_above_sma20", "N/A"))
+            breadth_cols[1].metric("% Above SMA50", breadth.get("percent_above_sma50", "N/A"))
+            breadth_cols[2].metric("Trend Strength", breadth.get("trend_strength", "N/A"))
+            breadth_cols[3].metric("5-Day Momentum", breadth.get("5day_momentum", "N/A"))
+
+            st.markdown("#### Historical Price Chart")
+            chart_series = st.multiselect(
+                "Chart series to display",
+                options=["Close", "SMA_20", "SMA_50", "EMA_20"],
+                default=["Close", "SMA_20", "SMA_50"],
+                key="nifty_chart_series"
+            )
+
+            if chart_series:
+                chart_df = index_df[chart_series].copy().dropna()
+                if not chart_df.empty:
+                    chart_df_reset = chart_df.reset_index().rename(columns={"index": "Date"})
+
+                    series_colors = {
+                        "Close": "#74c0fc",
+                        "SMA_20": "#f97316",
+                        "SMA_50": "#ef4444",
+                        "EMA_20": "#38bdf8",
+                    }
+
+                    long_chart_df = chart_df_reset.melt(
+                        id_vars=["Date"],
+                        value_vars=chart_series,
+                        var_name="Series",
+                        value_name="Price",
+                    ).dropna(subset=["Price"])
+
+                    if not long_chart_df.empty:
+                        y_min = float(long_chart_df["Price"].min())
+                        y_max = float(long_chart_df["Price"].max())
+                        padding = max((y_max - y_min) * 0.05, y_max * 0.002)
+
+                        color_scale = alt.Scale(
+                            domain=chart_series,
+                            range=[series_colors[s] for s in chart_series if s in series_colors],
+                        )
+
+                        chart = (
+                            alt.Chart(long_chart_df)
+                            .mark_line(strokeWidth=2)
+                            .encode(
+                                x=alt.X("Date:T", title=None),
+                                y=alt.Y("Price:Q", title="Price", scale=alt.Scale(domain=[max(0, y_min - padding), y_max + padding])),
+                                color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(orient="top")),
+                                tooltip=[
+                                    alt.Tooltip("Date:T", title="Date"),
+                                    alt.Tooltip("Series:N", title="Series"),
+                                    alt.Tooltip("Price:Q", title="Price", format=",.2f"),
+                                ],
+                            )
+                            .properties(height=320)
+                            .interactive()
+                        )
+                        st.altair_chart(chart, use_container_width=True)
+                else:
+                    st.info("Insufficient data for chart display.")
+
+            st.markdown("#### Technical Summary")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                trend_label = "Bullish" if close_value > sma_20_value and close_value > sma_50_value else "Bearish" if close_value < sma_20_value and close_value < sma_50_value else "Neutral"
+                rsi_label = "Overbought" if rsi_value > 70 else "Oversold" if rsi_value < 30 else "Neutral"
+                macd_signal = "Bullish" if macd_value > macd_signal_value else "Bearish"
+
+                st.markdown(
+                    f"""
+                    **Trend:** {trend_label}
+                    - Price above SMA20: {'Yes' if close_value > sma_20_value else 'No'}
+                    - Price above SMA50: {'Yes' if close_value > sma_50_value else 'No'}
+
+                    **Momentum:**
+                    - RSI (14): {rsi_value:.2f} ({rsi_label})
+                    - MACD: {macd_signal}
+                    - MACD Histogram: {'Positive' if macd_value > macd_signal_value else 'Negative'}
+                    """
+                )
+
+            with col2:
+                volatility_20 = float(index_df["DAILY_RETURN_PCT"].tail(20).std()) if "DAILY_RETURN_PCT" in index_df else 0.0
+                avg_volume = int(index_df["Volume"].tail(20).mean()) if "Volume" in index_df else 0
+
+                st.markdown(
+                    f"""
+                    **Volatility:**
+                    - 20D Std Dev: {volatility_20:.2f}%
+
+                    **Volume:**
+                    - 20D Avg Volume: {avg_volume:,.0f}
+
+                    **Data:**
+                    - Lookback: {index_days} days
+                    - Total bars: {len(index_df)}
+                    """
+                )
+
+            st.markdown("---")
+            st.caption("Note: Options chain and OI data are not available via free data sources. This analysis is based on price action and technical indicators.")
 
 
 if __name__ == "__main__":

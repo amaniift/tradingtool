@@ -7,7 +7,7 @@ import hashlib
 import os
 import random
 import zipfile
-from typing import Callable, Dict, List
+from typing import Any, Callable, Dict, List
 
 import feedparser
 import pandas as pd
@@ -694,6 +694,132 @@ def _score_headlines(
         )
 
     return pd.DataFrame(records)
+
+
+def _safe_json_num(value: Any) -> float | None:
+    """Convert API numeric fields to float safely."""
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(out):
+        return None
+    return out
+
+
+def _option_metric(leg: dict[str, Any], key: str) -> float | None:
+    """Extract metric from option leg including nested greeks payloads."""
+    if not leg:
+        return None
+
+    direct = _safe_json_num(leg.get(key))
+    if direct is not None:
+        return direct
+
+    greeks = leg.get("greeks")
+    if isinstance(greeks, dict):
+        return _safe_json_num(greeks.get(key))
+    return None
+
+
+def fetch_nifty_option_chain(symbol: str = "NIFTY") -> dict[str, Any]:
+    """Fetch NSE option-chain snapshot for NIFTY index derivatives.
+
+    Returns a dictionary with keys:
+    - symbol
+    - underlying_value
+    - nearest_expiry
+    - fetched_at
+    - chain_df (strike-level CE/PE fields)
+    """
+    session = requests.Session()
+    headers = dict(NSE_HEADERS)
+    headers["Accept"] = "application/json,text/plain,*/*"
+    session.headers.update(headers)
+
+    verify: str | bool = _REQUESTS_VERIFY
+    api_url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol.upper()}"
+
+    try:
+        session.get("https://www.nseindia.com", timeout=3, verify=verify)
+        session.get("https://www.nseindia.com/option-chain", timeout=3, verify=verify)
+    except SSLError:
+        verify = False
+        try:
+            session.get("https://www.nseindia.com", timeout=3, verify=False)
+            session.get("https://www.nseindia.com/option-chain", timeout=3, verify=False)
+        except requests.RequestException:
+            pass
+    except requests.RequestException:
+        pass
+
+    try:
+        response = session.get(api_url, timeout=4, verify=verify)
+        if response.status_code != 200:
+            return {}
+        payload = response.json()
+    except SSLError:
+        try:
+            response = session.get(api_url, timeout=4, verify=False)
+            if response.status_code != 200:
+                return {}
+            payload = response.json()
+        except (requests.RequestException, ValueError):
+            return {}
+    except (requests.RequestException, ValueError):
+        return {}
+
+    records = payload.get("records", {}) if isinstance(payload, dict) else {}
+    option_rows = records.get("data", []) if isinstance(records, dict) else []
+    expiries = records.get("expiryDates", []) if isinstance(records, dict) else []
+    nearest_expiry = str(expiries[0]) if expiries else None
+    underlying_value = _safe_json_num(records.get("underlyingValue")) if isinstance(records, dict) else None
+
+    parsed_rows: list[dict[str, Any]] = []
+    for row in option_rows:
+        if not isinstance(row, dict):
+            continue
+        expiry = str(row.get("expiryDate", ""))
+        if nearest_expiry and expiry != nearest_expiry:
+            continue
+
+        strike = _safe_json_num(row.get("strikePrice"))
+        if strike is None:
+            continue
+
+        ce_leg = row.get("CE") if isinstance(row.get("CE"), dict) else {}
+        pe_leg = row.get("PE") if isinstance(row.get("PE"), dict) else {}
+
+        parsed_rows.append(
+            {
+                "strike": strike,
+                "expiry": expiry,
+                "ce_oi": _option_metric(ce_leg, "openInterest") or 0.0,
+                "pe_oi": _option_metric(pe_leg, "openInterest") or 0.0,
+                "ce_change_oi": _option_metric(ce_leg, "changeinOpenInterest") or 0.0,
+                "pe_change_oi": _option_metric(pe_leg, "changeinOpenInterest") or 0.0,
+                "ce_iv": _option_metric(ce_leg, "impliedVolatility"),
+                "pe_iv": _option_metric(pe_leg, "impliedVolatility"),
+                "ce_last": _option_metric(ce_leg, "lastPrice"),
+                "pe_last": _option_metric(pe_leg, "lastPrice"),
+                "ce_gamma": _option_metric(ce_leg, "gamma"),
+                "pe_gamma": _option_metric(pe_leg, "gamma"),
+            }
+        )
+
+    if not parsed_rows:
+        return {}
+
+    chain_df = pd.DataFrame(parsed_rows).sort_values("strike").reset_index(drop=True)
+    return {
+        "symbol": symbol.upper(),
+        "underlying_value": underlying_value,
+        "nearest_expiry": nearest_expiry,
+        "fetched_at": pd.Timestamp.utcnow().isoformat(),
+        "chain_df": chain_df,
+    }
 
 
 def fetch_news_sentiment(

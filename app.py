@@ -8,10 +8,17 @@ from datetime import datetime
 from pathlib import Path
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
-from src.data.data_manager import fetch_eod_data, fetch_news_sentiment, get_yfinance_session, _YFINANCE_SESSION
+from src.data.data_manager import (
+    _YFINANCE_SESSION,
+    fetch_eod_data,
+    fetch_news_sentiment,
+    fetch_nifty_option_chain,
+    get_yfinance_session,
+)
 
 
 NIFTY_50_STOCKS = {
@@ -69,7 +76,94 @@ NIFTY_50_STOCKS = {
 
 LOG_PATH = Path("data") / "recommendation_log.csv"
 VERDICT_LOG_PATH = Path("data") / "verdict_log.csv"
+FEATURE_STORE_PATH = Path("data") / "feature_store.csv"
+NIFTY_IV_HISTORY_PATH = Path("data") / "nifty_iv_history.csv"
 HOLD_RETURN_BAND = 0.005
+
+EVENT_DAY_RISK_TEMPLATES = {
+    "Normal Session": {
+        "max_risk_per_trade_pct": 1.0,
+        "max_open_positions": 3,
+        "stop_buffer_atr": 1.0,
+        "target_buffer_atr": 1.8,
+    },
+    "Expiry Day": {
+        "max_risk_per_trade_pct": 0.55,
+        "max_open_positions": 2,
+        "stop_buffer_atr": 0.8,
+        "target_buffer_atr": 1.2,
+    },
+    "Macro Event Day": {
+        "max_risk_per_trade_pct": 0.45,
+        "max_open_positions": 1,
+        "stop_buffer_atr": 0.7,
+        "target_buffer_atr": 1.1,
+    },
+}
+
+META_FEATURE_COLUMNS = [
+    "rsi_14",
+    "macd_spread",
+    "sma20_gap_pct",
+    "sma50_gap_pct",
+    "ema20_gap_pct",
+    "momentum_5d_pct",
+    "volatility_20d_pct",
+    "news_sentiment",
+]
+
+NIFTY_SECTOR_MAP = {
+    "ADANIENT.NS": "Industrials",
+    "ADANIPORTS.NS": "Industrials",
+    "APOLLOHOSP.NS": "Healthcare",
+    "ASIANPAINT.NS": "Consumer",
+    "AXISBANK.NS": "Financials",
+    "BAJAJ-AUTO.NS": "Auto",
+    "BAJFINANCE.NS": "Financials",
+    "BAJAJFINSV.NS": "Financials",
+    "BEL.NS": "Industrials",
+    "BHARTIARTL.NS": "Telecom",
+    "CIPLA.NS": "Healthcare",
+    "COALINDIA.NS": "Energy",
+    "DRREDDY.NS": "Healthcare",
+    "EICHERMOT.NS": "Auto",
+    "ETERNAL.NS": "Consumer",
+    "GRASIM.NS": "Materials",
+    "HCLTECH.NS": "IT",
+    "HDFCBANK.NS": "Financials",
+    "HDFCLIFE.NS": "Financials",
+    "HINDALCO.NS": "Materials",
+    "HINDUNILVR.NS": "Consumer",
+    "ICICIBANK.NS": "Financials",
+    "INDIGO.NS": "Industrials",
+    "INFY.NS": "IT",
+    "ITC.NS": "Consumer",
+    "JIOFIN.NS": "Financials",
+    "JSWSTEEL.NS": "Materials",
+    "KOTAKBANK.NS": "Financials",
+    "LT.NS": "Industrials",
+    "M&M.NS": "Auto",
+    "MARUTI.NS": "Auto",
+    "MAXHEALTH.NS": "Healthcare",
+    "NESTLEIND.NS": "Consumer",
+    "NTPC.NS": "Energy",
+    "ONGC.NS": "Energy",
+    "POWERGRID.NS": "Utilities",
+    "RELIANCE.NS": "Energy",
+    "SBILIFE.NS": "Financials",
+    "SHRIRAMFIN.NS": "Financials",
+    "SBIN.NS": "Financials",
+    "SUNPHARMA.NS": "Healthcare",
+    "TCS.NS": "IT",
+    "TATACONSUM.NS": "Consumer",
+    "TMPV.NS": "Auto",
+    "TATASTEEL.NS": "Materials",
+    "TECHM.NS": "IT",
+    "TITAN.NS": "Consumer",
+    "TRENT.NS": "Consumer",
+    "ULTRACEMCO.NS": "Materials",
+    "WIPRO.NS": "IT",
+}
 
 VERDICT_POLICIES = {
     "Aggressive": {
@@ -1023,6 +1117,674 @@ def _calculate_next_session_pivots(index_df: pd.DataFrame) -> pd.DataFrame:
     return pivot_df
 
 
+def _softmax(values: list[float]) -> list[float]:
+    """Compute softmax probabilities for small vectors."""
+    if not values:
+        return []
+    max_v = max(values)
+    exp_vals = [math.exp(v - max_v) for v in values]
+    total = sum(exp_vals)
+    if total <= 0:
+        return [1.0 / len(values)] * len(values)
+    return [val / total for val in exp_vals]
+
+
+def _compute_derivatives_insights(snapshot: dict) -> tuple[dict[str, float | str], pd.DataFrame]:
+    """Derive OI/PCR/max-pain/gamma and key strikes from option-chain snapshot."""
+    chain_df = snapshot.get("chain_df")
+    if not isinstance(chain_df, pd.DataFrame) or chain_df.empty:
+        return {}, pd.DataFrame()
+
+    df = chain_df.copy()
+    for col in ["strike", "ce_oi", "pe_oi", "ce_iv", "pe_iv", "ce_gamma", "pe_gamma"]:
+        if col not in df.columns:
+            df[col] = 0.0
+    df[["strike", "ce_oi", "pe_oi", "ce_iv", "pe_iv", "ce_gamma", "pe_gamma"]] = (
+        df[["strike", "ce_oi", "pe_oi", "ce_iv", "pe_iv", "ce_gamma", "pe_gamma"]]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+    )
+
+    underlying = _safe_float(snapshot.get("underlying_value"), 0.0)
+    total_call_oi = float(df["ce_oi"].sum())
+    total_put_oi = float(df["pe_oi"].sum())
+    pcr = (total_put_oi / total_call_oi) if total_call_oi > 0 else 0.0
+
+    if underlying > 0:
+        atm_idx = (df["strike"] - underlying).abs().idxmin()
+        atm_row = df.loc[atm_idx]
+        iv_values = [v for v in [atm_row.get("ce_iv", 0.0), atm_row.get("pe_iv", 0.0)] if v and v > 0]
+        atm_iv = float(sum(iv_values) / len(iv_values)) if iv_values else 0.0
+    else:
+        atm_iv = 0.0
+
+    strikes = df["strike"].tolist()
+    call_oi = df["ce_oi"].tolist()
+    put_oi = df["pe_oi"].tolist()
+    max_pain_strike = 0.0
+    min_pain = None
+    for settlement in strikes:
+        pain = 0.0
+        for strike, coi, poi in zip(strikes, call_oi, put_oi):
+            pain += max(0.0, settlement - strike) * coi
+            pain += max(0.0, strike - settlement) * poi
+        if min_pain is None or pain < min_pain:
+            min_pain = pain
+            max_pain_strike = settlement
+
+    df["gamma_exposure"] = (df["ce_gamma"] * df["ce_oi"]) + (df["pe_gamma"] * df["pe_oi"])
+    gamma_wall = float(df.loc[df["gamma_exposure"].idxmax(), "strike"]) if not df.empty else 0.0
+    df["total_oi"] = df["ce_oi"] + df["pe_oi"]
+    magnets = df.sort_values(["total_oi", "gamma_exposure"], ascending=[False, False]).head(6).copy()
+    if underlying > 0:
+        magnets["distance_to_spot_pct"] = ((magnets["strike"] - underlying) / underlying) * 100.0
+    else:
+        magnets["distance_to_spot_pct"] = 0.0
+
+    metrics = {
+        "underlying": underlying,
+        "pcr": pcr,
+        "total_call_oi": total_call_oi,
+        "total_put_oi": total_put_oi,
+        "max_pain": float(max_pain_strike),
+        "atm_iv": float(atm_iv),
+        "gamma_wall": float(gamma_wall),
+        "expiry": str(snapshot.get("nearest_expiry") or "N/A"),
+    }
+    return metrics, magnets[["strike", "total_oi", "gamma_exposure", "distance_to_spot_pct"]]
+
+
+def _update_iv_history_and_percentile(expiry: str, atm_iv: float) -> float | None:
+    """Persist ATM IV observations and return trailing IV percentile."""
+    if atm_iv <= 0:
+        return None
+
+    NIFTY_IV_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    today = datetime.now().date().isoformat()
+    new_row = pd.DataFrame(
+        [
+            {
+                "as_of_date": today,
+                "expiry": expiry,
+                "atm_iv": float(atm_iv),
+            }
+        ]
+    )
+
+    if NIFTY_IV_HISTORY_PATH.exists():
+        hist_df = pd.read_csv(NIFTY_IV_HISTORY_PATH)
+    else:
+        hist_df = pd.DataFrame(columns=["as_of_date", "expiry", "atm_iv"])
+
+    hist_df = hist_df[~((hist_df["as_of_date"].astype(str) == today) & (hist_df["expiry"].astype(str) == expiry))]
+    hist_df = pd.concat([hist_df, new_row], ignore_index=True)
+    hist_df["atm_iv"] = pd.to_numeric(hist_df["atm_iv"], errors="coerce")
+    hist_df = hist_df.dropna(subset=["atm_iv"])
+    hist_df.to_csv(NIFTY_IV_HISTORY_PATH, index=False)
+
+    if len(hist_df) < 5:
+        return None
+    percentile = float((hist_df["atm_iv"] <= atm_iv).mean() * 100.0)
+    return percentile
+
+
+def _days_to_expiry(expiry_text: str) -> int | None:
+    """Parse NSE expiry date string and return days to expiry."""
+    if not expiry_text or expiry_text == "N/A":
+        return None
+    parsed = pd.to_datetime(expiry_text, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return int((parsed.date() - datetime.now().date()).days)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def build_feature_store_snapshot(days: int, finalized_only: bool, use_live_news: bool, max_news_items: int = 6) -> pd.DataFrame:
+    """Build cross-sectional feature store for all NIFTY 50 names."""
+    import yfinance as yf
+
+    rows = []
+    for company, ticker in NIFTY_50_STOCKS.items():
+        eod_df = fetch_eod_data(ticker, days=max(days, 130))
+        if eod_df.empty:
+            continue
+
+        if finalized_only and "IS_PROVISIONAL" in eod_df.columns:
+            finalized_df = eod_df[~eod_df["IS_PROVISIONAL"]].copy()
+            if not finalized_df.empty:
+                eod_df = finalized_df
+
+        if len(eod_df) < 60:
+            continue
+
+        latest = eod_df.iloc[-1]
+        close_value = _safe_float(latest.get("Close"), 0.0)
+        if close_value <= 0:
+            continue
+
+        sma20 = _safe_float(latest.get("SMA_20"), close_value)
+        sma50 = _safe_float(latest.get("SMA_50"), close_value)
+        ema20 = _safe_float(latest.get("EMA_20"), close_value)
+        macd = _safe_float(latest.get("MACD"), 0.0)
+        macd_signal = _safe_float(latest.get("MACD_SIGNAL"), 0.0)
+        rsi = _safe_float(latest.get("RSI_14"), 50.0)
+        daily_return_std = float(eod_df["DAILY_RETURN_PCT"].tail(20).std()) if "DAILY_RETURN_PCT" in eod_df else 0.0
+        momentum_5d = float(eod_df["Close"].pct_change(5).iloc[-1] * 100.0)
+        next_day_target = float(eod_df["Close"].pct_change().shift(-1).iloc[-2] * 100.0) if len(eod_df) > 6 else 0.0
+
+        vol_mean = float(eod_df["Volume"].tail(20).mean()) if "Volume" in eod_df else 0.0
+        vol_std = float(eod_df["Volume"].tail(20).std()) if "Volume" in eod_df else 0.0
+        latest_vol = _safe_float(latest.get("Volume"), 0.0)
+        volume_z = ((latest_vol - vol_mean) / vol_std) if vol_std > 0 else 0.0
+
+        news_df = fetch_news_sentiment(ticker, max_items=max_news_items, use_live_news=use_live_news)
+        news_sentiment = float(news_df["sentiment_score"].mean()) if not news_df.empty else 0.0
+
+        recommendation, combined_score, technical_score, _ = generate_recommendation(
+            rsi_value=rsi,
+            macd_value=macd,
+            macd_signal_value=macd_signal,
+            close_value=close_value,
+            sma_20_value=sma20,
+            avg_news_sentiment=news_sentiment,
+        )
+
+        trailing_pe = 0.0
+        market_cap_cr = 0.0
+        beta = 0.0
+        try:
+            info = yf.Ticker(ticker, session=get_yfinance_session()).fast_info
+            if hasattr(info, "get"):
+                trailing_pe = _safe_float(info.get("trailingPE"), 0.0)
+                market_cap = _safe_float(info.get("marketCap"), 0.0)
+                beta = _safe_float(info.get("beta"), 0.0)
+                market_cap_cr = (market_cap / 1e7) if market_cap > 0 else 0.0
+        except Exception:
+            pass
+
+        rows.append(
+            {
+                "as_of": datetime.now().isoformat(timespec="seconds"),
+                "company": company,
+                "ticker": ticker,
+                "close": round(close_value, 2),
+                "rsi_14": round(rsi, 3),
+                "macd_spread": round(macd - macd_signal, 4),
+                "sma20_gap_pct": round(((close_value - sma20) / sma20) * 100.0 if sma20 > 0 else 0.0, 4),
+                "sma50_gap_pct": round(((close_value - sma50) / sma50) * 100.0 if sma50 > 0 else 0.0, 4),
+                "ema20_gap_pct": round(((close_value - ema20) / ema20) * 100.0 if ema20 > 0 else 0.0, 4),
+                "momentum_5d_pct": round(momentum_5d, 4),
+                "volatility_20d_pct": round(daily_return_std, 4),
+                "volume_zscore": round(volume_z, 4),
+                "news_sentiment": round(news_sentiment, 4),
+                "rule_recommendation": recommendation,
+                "rule_score": round(combined_score, 4),
+                "technical_score": round(technical_score, 4),
+                "trailing_pe": round(trailing_pe, 4),
+                "market_cap_cr": round(market_cap_cr, 2),
+                "beta": round(beta, 4),
+                "next_day_return_pct_target": round(next_day_target, 4),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def _persist_feature_store_snapshot(feature_df: pd.DataFrame) -> Path:
+    """Append latest feature snapshot to persistent CSV store."""
+    FEATURE_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not FEATURE_STORE_PATH.exists()
+    mode = "a"
+    feature_df.to_csv(FEATURE_STORE_PATH, mode=mode, header=write_header, index=False)
+    return FEATURE_STORE_PATH
+
+
+def _fit_meta_linear_model(feature_df: pd.DataFrame) -> tuple[np.ndarray, pd.Series, pd.Series] | None:
+    """Fit a lightweight linear model over engineered features to estimate return."""
+    required_cols = META_FEATURE_COLUMNS + ["next_day_return_pct_target"]
+    if feature_df.empty or not set(required_cols).issubset(feature_df.columns):
+        return None
+
+    train_df = feature_df[required_cols].copy().dropna()
+    if len(train_df) < 25:
+        return None
+
+    x = train_df[META_FEATURE_COLUMNS].astype(float)
+    y = train_df["next_day_return_pct_target"].astype(float)
+
+    mu = x.mean()
+    sigma = x.std().replace(0.0, 1.0)
+    x_scaled = (x - mu) / sigma
+    x_mat = np.column_stack([np.ones(len(x_scaled.index)), x_scaled.values])
+
+    ridge_lambda = 0.8
+    ridge_eye = np.eye(x_mat.shape[1])
+    ridge_eye[0, 0] = 0.0
+    beta = np.linalg.pinv(x_mat.T @ x_mat + ridge_lambda * ridge_eye) @ x_mat.T @ y.values
+    return beta, mu, sigma
+
+
+def _build_probabilistic_outlook(rule_score: float, ml_return_pct: float, volatility_pct: float) -> dict[str, float]:
+    """Convert blended signals into a simple return-probability distribution."""
+    ml_score = max(min(ml_return_pct / 1.5, 2.5), -2.5)
+    vol_penalty = min(max(volatility_pct / 2.5, 0.0), 1.2)
+    up_logit = (1.1 * rule_score) + (0.75 * ml_score) - (0.25 * vol_penalty)
+    down_logit = (-1.1 * rule_score) + (-0.75 * ml_score) - (0.25 * vol_penalty)
+    flat_logit = 0.35 + (0.45 * vol_penalty) - (0.25 * abs(rule_score))
+
+    p_up, p_down, p_flat = _softmax([up_logit, down_logit, flat_logit])
+    expected_return_pct = (p_up - p_down) * max(0.35, volatility_pct * 0.9)
+    return {
+        "prob_up": p_up,
+        "prob_down": p_down,
+        "prob_flat": p_flat,
+        "expected_return_pct": expected_return_pct,
+    }
+
+
+def run_meta_model_blend(feature_df: pd.DataFrame) -> pd.DataFrame:
+    """Blend rule-engine output with an ML ranking score and probabilities."""
+    if feature_df.empty:
+        return pd.DataFrame()
+
+    out = feature_df.copy()
+    model = _fit_meta_linear_model(out)
+    if model is None:
+        out["ml_expected_return_pct"] = 0.0
+    else:
+        beta, mu, sigma = model
+        x_live = out[META_FEATURE_COLUMNS].astype(float)
+        x_live_scaled = (x_live - mu) / sigma
+        x_live_mat = np.column_stack([np.ones(len(x_live_scaled.index)), x_live_scaled.values])
+        out["ml_expected_return_pct"] = x_live_mat @ beta
+
+    out["ml_score"] = out["ml_expected_return_pct"].apply(lambda v: max(min(v / 1.6, 1.0), -1.0))
+    out["meta_score"] = (0.58 * out["rule_score"]) + (0.42 * out["ml_score"])
+
+    prob_rows = []
+    for row in out.itertuples(index=False):
+        probs = _build_probabilistic_outlook(
+            rule_score=float(getattr(row, "rule_score", 0.0)),
+            ml_return_pct=float(getattr(row, "ml_expected_return_pct", 0.0)),
+            volatility_pct=abs(float(getattr(row, "volatility_20d_pct", 0.0))),
+        )
+        prob_rows.append(probs)
+
+    prob_df = pd.DataFrame(prob_rows)
+    out = pd.concat([out.reset_index(drop=True), prob_df], axis=1)
+
+    out["meta_recommendation"] = out["meta_score"].apply(
+        lambda s: "BUY" if s >= 0.20 else "SELL" if s <= -0.20 else "HOLD"
+    )
+    out = out.sort_values(["meta_score", "ml_expected_return_pct"], ascending=[False, False]).reset_index(drop=True)
+    return out
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_intraday_data(ticker: str, interval: str = "5m", period_days: int = 5) -> pd.DataFrame:
+    """Fetch intraday OHLCV bars for NSE symbols using yfinance."""
+    import yfinance as yf
+
+    safe_days = min(max(int(period_days), 1), 30)
+    period = f"{safe_days}d"
+
+    try:
+        intraday_df = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            progress=False,
+            auto_adjust=False,
+            threads=False,
+            session=get_yfinance_session(),
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    if intraday_df.empty:
+        return pd.DataFrame()
+
+    if isinstance(intraday_df.columns, pd.MultiIndex):
+        intraday_df.columns = intraday_df.columns.get_level_values(0)
+
+    out = intraday_df.copy()
+    out.index = pd.to_datetime(out.index).tz_localize(None)
+    return out
+
+
+def _compute_opening_range_stats(intraday_df: pd.DataFrame, opening_range_mins: int) -> dict[str, float | str]:
+    """Compute opening range, breakout direction, and failure flags for latest session."""
+    if intraday_df.empty or "Open" not in intraday_df.columns:
+        return {}
+
+    latest_date = intraday_df.index[-1].date()
+    session_df = intraday_df[intraday_df.index.date == latest_date].copy()
+    if session_df.empty:
+        return {}
+
+    if len(session_df.index) >= 2:
+        interval_minutes = int(max((session_df.index[1] - session_df.index[0]).total_seconds() // 60, 1))
+    else:
+        interval_minutes = 5
+
+    bars_for_or = max(int(opening_range_mins // interval_minutes), 1)
+    opening_slice = session_df.head(bars_for_or)
+    if opening_slice.empty:
+        return {}
+
+    or_high = float(opening_slice["High"].max()) if "High" in opening_slice else 0.0
+    or_low = float(opening_slice["Low"].min()) if "Low" in opening_slice else 0.0
+    current_close = float(session_df["Close"].iloc[-1]) if "Close" in session_df else 0.0
+
+    broke_above = bool((session_df.get("High", pd.Series(dtype=float)) > or_high).any())
+    broke_below = bool((session_df.get("Low", pd.Series(dtype=float)) < or_low).any())
+    failed_above = broke_above and (current_close < or_high)
+    failed_below = broke_below and (current_close > or_low)
+
+    if current_close > or_high:
+        bias = "Bullish Breakout"
+    elif current_close < or_low:
+        bias = "Bearish Breakdown"
+    else:
+        bias = "Inside Range"
+
+    return {
+        "session_date": latest_date.isoformat(),
+        "opening_high": or_high,
+        "opening_low": or_low,
+        "current_close": current_close,
+        "opening_range_pct": ((or_high - or_low) / current_close) * 100.0 if current_close > 0 else 0.0,
+        "breakout_bias": bias,
+        "breakout_failed_up": int(failed_above),
+        "breakout_failed_down": int(failed_below),
+        "bars_in_session": int(len(session_df.index)),
+    }
+
+
+def _compute_intraday_pivot_reactions(intraday_df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Measure intraday pivot touches and breakout-failure counts for latest session."""
+    if intraday_df.empty or not {"High", "Low", "Close"}.issubset(intraday_df.columns):
+        return pd.DataFrame(), {}
+
+    daily_df = (
+        intraday_df[["Open", "High", "Low", "Close"]]
+        .resample("1D")
+        .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+        .dropna(subset=["Close"])
+    )
+    if len(daily_df.index) < 2:
+        return pd.DataFrame(), {}
+
+    prev_day = daily_df.iloc[-2]
+    prev_ohlc = pd.DataFrame([prev_day])[ ["High", "Low", "Close"] ]
+    pivot_df = _calculate_next_session_pivots(prev_ohlc)
+    if pivot_df.empty:
+        return pd.DataFrame(), {}
+
+    latest_date = intraday_df.index[-1].date()
+    session_df = intraday_df[intraday_df.index.date == latest_date].copy()
+    if session_df.empty:
+        return pivot_df, {}
+
+    spot = float(session_df["Close"].iloc[-1])
+    tolerance = max(spot * 0.0008, 0.5)
+    touch_rows = []
+    for row in pivot_df.itertuples(index=False):
+        level_name = str(row.Level)
+        level_value = float(row.Price)
+        touches = int(((session_df["Low"] <= level_value + tolerance) & (session_df["High"] >= level_value - tolerance)).sum())
+        touch_rows.append({"Level": level_name, "Price": level_value, "Touches": touches})
+
+    touch_df = pd.DataFrame(touch_rows)
+    level_map = {str(row.Level): float(row.Price) for row in pivot_df.itertuples(index=False)}
+    r1 = level_map.get("R1")
+    s1 = level_map.get("S1")
+    failed_r1_breaks = int(((session_df["High"] > r1) & (session_df["Close"] < r1)).sum()) if r1 is not None else 0
+    failed_s1_breaks = int(((session_df["Low"] < s1) & (session_df["Close"] > s1)).sum()) if s1 is not None else 0
+
+    stats = {
+        "failed_r1_breaks": float(failed_r1_breaks),
+        "failed_s1_breaks": float(failed_s1_breaks),
+        "pivot_touch_total": float(touch_df["Touches"].sum()) if not touch_df.empty else 0.0,
+    }
+    return touch_df, stats
+
+
+def _build_preopen_gap_playbook(ticker: str, intraday_df: pd.DataFrame) -> dict[str, float | str]:
+    """Create a pre-open gap and opening-auction style playbook for latest session."""
+    if intraday_df.empty:
+        return {}
+
+    latest_date = intraday_df.index[-1].date()
+    session_df = intraday_df[intraday_df.index.date == latest_date].copy()
+    if session_df.empty:
+        return {}
+
+    daily_ref = fetch_eod_data(ticker, days=3)
+    if daily_ref.empty:
+        return {}
+    prev_close = _safe_float(daily_ref.iloc[-1].get("Close"), 0.0)
+    first_open = _safe_float(session_df.iloc[0].get("Open"), 0.0)
+    if prev_close <= 0 or first_open <= 0:
+        return {}
+
+    gap_pct = ((first_open - prev_close) / prev_close) * 100.0
+    opening_slice = session_df.head(min(3, len(session_df.index)))
+    auction_return = ((_safe_float(opening_slice.iloc[-1].get("Close"), first_open) - first_open) / first_open) * 100.0
+    first_volume = float(opening_slice.get("Volume", pd.Series(dtype=float)).sum()) if "Volume" in opening_slice else 0.0
+    median_volume = float(intraday_df.get("Volume", pd.Series(dtype=float)).median()) if "Volume" in intraday_df else 0.0
+    volume_ratio = (first_volume / median_volume) if median_volume > 0 else 1.0
+
+    if gap_pct >= 0.7 and auction_return > 0:
+        setup = "Gap-up continuation candidate"
+    elif gap_pct >= 0.7 and auction_return < 0:
+        setup = "Gap-up fade candidate"
+    elif gap_pct <= -0.7 and auction_return < 0:
+        setup = "Gap-down continuation candidate"
+    elif gap_pct <= -0.7 and auction_return > 0:
+        setup = "Gap-down mean-reversion candidate"
+    else:
+        setup = "Neutral open; wait for opening range break"
+
+    auction_signal = "Strong" if abs(auction_return) >= 0.25 and volume_ratio >= 3.0 else "Moderate" if abs(auction_return) >= 0.12 else "Weak"
+    return {
+        "prev_close": prev_close,
+        "session_open": first_open,
+        "gap_pct": gap_pct,
+        "auction_return_pct": auction_return,
+        "auction_volume_ratio": volume_ratio,
+        "playbook": setup,
+        "auction_signal": auction_signal,
+    }
+
+
+@st.cache_data(ttl=1200, show_spinner=False)
+def _build_portfolio_correlations(tickers: tuple[str, ...], lookback_days: int, finalized_only: bool) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build return matrix and correlation matrix for selected tickers."""
+    returns_map: dict[str, pd.Series] = {}
+    for ticker in tickers:
+        eod_df = fetch_eod_data(ticker, days=max(lookback_days, 90))
+        if eod_df.empty or "Close" not in eod_df.columns:
+            continue
+        if finalized_only and "IS_PROVISIONAL" in eod_df.columns:
+            final_df = eod_df[~eod_df["IS_PROVISIONAL"]].copy()
+            if not final_df.empty:
+                eod_df = final_df
+        series = eod_df["Close"].astype(float).pct_change().dropna()
+        if not series.empty:
+            returns_map[ticker] = series.tail(lookback_days)
+
+    if not returns_map:
+        return pd.DataFrame(), pd.DataFrame()
+
+    returns_df = pd.DataFrame(returns_map).dropna(how="all")
+    if returns_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    corr_df = returns_df.corr().fillna(0.0)
+    return returns_df, corr_df
+
+
+def build_portfolio_from_verdict(
+    verdict_df: pd.DataFrame,
+    account_capital: float,
+    max_positions: int,
+    max_sector_exposure_pct: float,
+    lookback_days: int,
+    drawdown_guardrail_pct: float,
+    finalized_only: bool,
+) -> dict[str, object]:
+    """Construct a multi-position portfolio with correlation and sector constraints."""
+    if verdict_df.empty:
+        return {}
+
+    base_df = verdict_df.copy().head(max_positions).reset_index(drop=True)
+    if base_df.empty:
+        return {}
+
+    base_df["sector"] = base_df["ticker"].map(NIFTY_SECTOR_MAP).fillna("Other")
+    returns_df, corr_df = _build_portfolio_correlations(tuple(base_df["ticker"].tolist()), lookback_days, finalized_only)
+
+    raw_scores: list[float] = []
+    avg_corr_list: list[float] = []
+    for row in base_df.itertuples(index=False):
+        ticker = str(row.ticker)
+        if not corr_df.empty and ticker in corr_df.index:
+            peers = corr_df.loc[ticker].drop(labels=[ticker], errors="ignore")
+            avg_corr = float(peers.mean()) if not peers.empty else 0.0
+        else:
+            avg_corr = 0.0
+        avg_corr_list.append(avg_corr)
+
+        quality = abs(float(getattr(row, "score", 0.0))) * max(float(getattr(row, "rr_ratio", 1.0)), 1.0)
+        diversifier = 1.0 / (1.0 + max(avg_corr, 0.0))
+        raw_scores.append(max(quality * diversifier, 0.01))
+
+    raw_total = sum(raw_scores)
+    prelim_weights = [score / raw_total for score in raw_scores] if raw_total > 0 else [1.0 / len(raw_scores)] * len(raw_scores)
+
+    sector_cap = max_sector_exposure_pct / 100.0
+    sector_used: dict[str, float] = {}
+    weights = [0.0] * len(prelim_weights)
+    remaining_total = 1.0
+
+    ordering = sorted(range(len(prelim_weights)), key=lambda idx: prelim_weights[idx], reverse=True)
+    for idx in ordering:
+        sector = str(base_df.at[idx, "sector"])
+        used = sector_used.get(sector, 0.0)
+        headroom = max(sector_cap - used, 0.0)
+        alloc = min(prelim_weights[idx], headroom, remaining_total)
+        weights[idx] = max(alloc, 0.0)
+        sector_used[sector] = used + weights[idx]
+        remaining_total -= weights[idx]
+
+    if remaining_total > 1e-6:
+        eligible = [idx for idx in ordering if weights[idx] < prelim_weights[idx]]
+        for idx in eligible:
+            sector = str(base_df.at[idx, "sector"])
+            headroom = max(sector_cap - sector_used.get(sector, 0.0), 0.0)
+            extra = min(headroom, remaining_total)
+            weights[idx] += extra
+            sector_used[sector] = sector_used.get(sector, 0.0) + extra
+            remaining_total -= extra
+            if remaining_total <= 1e-6:
+                break
+
+    weight_sum = sum(weights)
+    if weight_sum > 0:
+        weights = [w / weight_sum for w in weights]
+
+    base_df["avg_corr"] = [round(v, 3) for v in avg_corr_list]
+    base_df["alloc_weight"] = weights
+    base_df["capital_alloc"] = [round(account_capital * w, 2) for w in weights]
+
+    qty_alloc = []
+    capital_used = []
+    expected_profit = []
+    expected_loss = []
+    for row in base_df.itertuples(index=False):
+        entry = float(row.entry)
+        stop_loss = float(row.stop_loss)
+        target = float(row.target)
+        alloc_cap = float(row.capital_alloc)
+        if entry <= 0:
+            qty = 0
+        else:
+            qty = max(math.floor(alloc_cap / entry), 0)
+        qty_alloc.append(int(qty))
+        capital_used.append(round(qty * entry, 2))
+        expected_profit.append(round(qty * abs(target - entry), 2))
+        expected_loss.append(round(qty * abs(entry - stop_loss), 2))
+
+    base_df["qty_alloc"] = qty_alloc
+    base_df["capital_used"] = capital_used
+    base_df["expected_profit"] = expected_profit
+    base_df["expected_loss"] = expected_loss
+
+    if not returns_df.empty:
+        signed_returns = returns_df.copy()
+        for row in base_df.itertuples(index=False):
+            ticker = str(row.ticker)
+            if ticker not in signed_returns.columns:
+                continue
+            if str(row.side).upper() == "SELL":
+                signed_returns[ticker] = -signed_returns[ticker]
+
+        weighted = pd.Series(0.0, index=signed_returns.index)
+        for row in base_df.itertuples(index=False):
+            ticker = str(row.ticker)
+            if ticker in signed_returns.columns:
+                weighted = weighted + (float(row.alloc_weight) * signed_returns[ticker].fillna(0.0))
+        weighted = weighted.dropna()
+    else:
+        weighted = pd.Series(dtype=float)
+
+    if weighted.empty:
+        var_95 = 0.0
+        cvar_95 = 0.0
+        max_drawdown_pct = 0.0
+    else:
+        q05 = float(np.quantile(weighted.values, 0.05))
+        tail = weighted[weighted <= q05]
+        var_95 = abs(q05) * 100.0
+        cvar_95 = abs(float(tail.mean())) * 100.0 if not tail.empty else var_95
+        equity = (1.0 + weighted).cumprod()
+        drawdown = (equity / equity.cummax()) - 1.0
+        max_drawdown_pct = abs(float(drawdown.min())) * 100.0 if not drawdown.empty else 0.0
+
+    guardrail_breached = max_drawdown_pct > drawdown_guardrail_pct
+    de_risk_factor = min(drawdown_guardrail_pct / max_drawdown_pct, 1.0) if max_drawdown_pct > 0 else 1.0
+
+    sector_df = (
+        base_df.groupby("sector", as_index=False)["alloc_weight"]
+        .sum()
+        .rename(columns={"alloc_weight": "weight"})
+        .sort_values("weight", ascending=False)
+    )
+    sector_df["weight_pct"] = sector_df["weight"] * 100.0
+
+    summary = {
+        "positions": int(len(base_df.index)),
+        "capital_used": float(base_df["capital_used"].sum()),
+        "expected_profit": float(base_df["expected_profit"].sum()),
+        "expected_loss": float(base_df["expected_loss"].sum()),
+        "portfolio_rr": (float(base_df["expected_profit"].sum()) / float(base_df["expected_loss"].sum())) if float(base_df["expected_loss"].sum()) > 0 else 0.0,
+        "var_95_pct": var_95,
+        "cvar_95_pct": cvar_95,
+        "max_drawdown_pct": max_drawdown_pct,
+        "guardrail_breached": guardrail_breached,
+        "de_risk_factor": de_risk_factor,
+    }
+
+    return {
+        "portfolio_df": base_df,
+        "sector_df": sector_df,
+        "corr_df": corr_df,
+        "summary": summary,
+    }
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def build_verdict_candidates(
     days: int,
@@ -1240,14 +2002,47 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
 
-    signal_tab, pulse_tab, verdict_tab, backtest_tab, nifty_analysis_tab = st.tabs(
-        ["Signal Dashboard", "NIFTY 50 Pulse", "Verdict", "Backtest", "NIFTY 50 Analysis"])
+    signal_tab, pulse_tab, verdict_tab, portfolio_tab, intraday_tab, backtest_tab, nifty_analysis_tab, derivatives_quant_tab = st.tabs(
+        [
+            "Signal Dashboard",
+            "NIFTY 50 Pulse",
+            "Verdict",
+            "Portfolio Lab",
+            "Intraday Intelligence",
+            "Backtest",
+            "NIFTY 50 Analysis",
+            "Derivatives + Quant Lab",
+        ]
+    )
 
     with signal_tab:
         eod_df = get_eod_cached(selected_ticker, days=days)
         if eod_df.empty:
             st.error("No EOD data available for selected ticker.")
-            return
+            fallback_ticker = "RELIANCE.NS"
+            eod_df = get_eod_cached(fallback_ticker, days=days)
+            if eod_df.empty:
+                st.warning("Fallback data is also unavailable. Signal tab is limited right now, but other tabs continue to work.")
+                eod_df = pd.DataFrame(
+                    {
+                        "Open": [0.0],
+                        "High": [0.0],
+                        "Low": [0.0],
+                        "Close": [0.0],
+                        "Volume": [0.0],
+                        "SMA_20": [0.0],
+                        "SMA_50": [0.0],
+                        "EMA_20": [0.0],
+                        "RSI_14": [50.0],
+                        "MACD": [0.0],
+                        "MACD_SIGNAL": [0.0],
+                        "MACD_HIST": [0.0],
+                        "DAILY_RETURN_PCT": [0.0],
+                        "DATA_SOURCE": ["unavailable"],
+                        "IS_PROVISIONAL": [True],
+                    },
+                    index=[pd.Timestamp.utcnow().tz_localize(None)],
+                )
 
         if finalized_only and "IS_PROVISIONAL" in eod_df.columns:
             finalized_df = eod_df[~eod_df["IS_PROVISIONAL"]].copy()
@@ -1600,6 +2395,221 @@ def main() -> None:
             st.caption(
                 "Last generated verdict is retained in session for quick export/logging.")
 
+    with portfolio_tab:
+        st.subheader("Portfolio Lab")
+        st.caption("Build multi-position portfolios from verdict candidates with correlation-aware sizing and risk guardrails.")
+
+        pcol1, pcol2, pcol3 = st.columns(3)
+        portfolio_policy = pcol1.selectbox("Portfolio policy", list(VERDICT_POLICIES.keys()), index=1, key="portfolio_policy")
+        portfolio_capital = pcol2.number_input("Portfolio capital", min_value=50000.0, value=500000.0, step=10000.0, key="portfolio_capital")
+        portfolio_positions = int(pcol3.slider("Max positions", min_value=3, max_value=12, value=6, step=1, key="portfolio_positions"))
+
+        pcol4, pcol5, pcol6 = st.columns(3)
+        sector_cap_pct = float(pcol4.slider("Max sector exposure (%)", min_value=20, max_value=70, value=35, step=5, key="portfolio_sector_cap"))
+        corr_lookback = int(pcol5.slider("Correlation lookback days", min_value=45, max_value=252, value=126, step=9, key="portfolio_corr_lookback"))
+        dd_guardrail = float(pcol6.slider("Drawdown guardrail (%)", min_value=4.0, max_value=20.0, value=10.0, step=0.5, key="portfolio_dd_guardrail"))
+
+        if st.button("Construct Portfolio", key="run_portfolio_lab"):
+            with st.spinner("Constructing portfolio from verdict candidates..."):
+                verdict_pool = build_verdict_candidates(
+                    days=days,
+                    finalized_only=finalized_only,
+                    policy_name=portfolio_policy,
+                )
+                verdict_pool = apply_position_sizing(
+                    verdict_df=verdict_pool,
+                    account_capital=float(portfolio_capital),
+                    risk_per_trade_pct=1.0,
+                    max_trades=max(portfolio_positions * 2, portfolio_positions),
+                )
+
+                portfolio_bundle = build_portfolio_from_verdict(
+                    verdict_df=verdict_pool,
+                    account_capital=float(portfolio_capital),
+                    max_positions=portfolio_positions,
+                    max_sector_exposure_pct=sector_cap_pct,
+                    lookback_days=corr_lookback,
+                    drawdown_guardrail_pct=dd_guardrail,
+                    finalized_only=finalized_only,
+                )
+                st.session_state["portfolio_bundle"] = portfolio_bundle
+
+        portfolio_bundle = st.session_state.get("portfolio_bundle")
+        if isinstance(portfolio_bundle, dict) and portfolio_bundle:
+            summary = portfolio_bundle.get("summary", {})
+            portfolio_df = portfolio_bundle.get("portfolio_df", pd.DataFrame())
+            sector_df = portfolio_bundle.get("sector_df", pd.DataFrame())
+            corr_df = portfolio_bundle.get("corr_df", pd.DataFrame())
+
+            metric_cols = st.columns(6)
+            metric_cols[0].metric("Positions", f"{int(summary.get('positions', 0))}")
+            metric_cols[1].metric("Capital Used", f"{float(summary.get('capital_used', 0.0)):.2f}")
+            metric_cols[2].metric("Portfolio R:R", f"{float(summary.get('portfolio_rr', 0.0)):.2f}")
+            metric_cols[3].metric("VaR 95%", f"{float(summary.get('var_95_pct', 0.0)):.2f}%")
+            metric_cols[4].metric("CVaR 95%", f"{float(summary.get('cvar_95_pct', 0.0)):.2f}%")
+            metric_cols[5].metric("Max Drawdown", f"{float(summary.get('max_drawdown_pct', 0.0)):.2f}%")
+
+            if bool(summary.get("guardrail_breached", False)):
+                st.warning(
+                    f"Drawdown guardrail breached. Suggested de-risk factor: {float(summary.get('de_risk_factor', 1.0)):.2f}x"
+                )
+            else:
+                st.success("Drawdown guardrail check passed for current portfolio mix.")
+
+            if isinstance(portfolio_df, pd.DataFrame) and not portfolio_df.empty:
+                st.markdown("##### Portfolio Construction")
+                view_cols = [
+                    "company",
+                    "ticker",
+                    "sector",
+                    "side",
+                    "score",
+                    "rr_ratio",
+                    "avg_corr",
+                    "alloc_weight",
+                    "capital_alloc",
+                    "qty_alloc",
+                    "entry",
+                    "target",
+                    "stop_loss",
+                    "expected_profit",
+                    "expected_loss",
+                ]
+                available_cols = [col for col in view_cols if col in portfolio_df.columns]
+                st.dataframe(
+                    portfolio_df[available_cols].style.format(
+                        {
+                            "score": "{:.3f}",
+                            "rr_ratio": "{:.2f}",
+                            "avg_corr": "{:.2f}",
+                            "alloc_weight": "{:.2%}",
+                            "capital_alloc": "{:.2f}",
+                            "entry": "{:.2f}",
+                            "target": "{:.2f}",
+                            "stop_loss": "{:.2f}",
+                            "expected_profit": "{:.2f}",
+                            "expected_loss": "{:.2f}",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            s1, s2 = st.columns(2)
+            with s1:
+                st.markdown("##### Sector Exposure")
+                if isinstance(sector_df, pd.DataFrame) and not sector_df.empty:
+                    st.dataframe(
+                        sector_df[["sector", "weight_pct"]].style.format({"weight_pct": "{:.2f}%"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("Sector exposure is unavailable.")
+
+            with s2:
+                st.markdown("##### Correlation Matrix")
+                if isinstance(corr_df, pd.DataFrame) and not corr_df.empty:
+                    st.dataframe(corr_df.style.format("{:.2f}"), use_container_width=True)
+                else:
+                    st.info("Correlation matrix not available for selected set.")
+        else:
+            st.info("Click 'Construct Portfolio' to generate a correlation-aware multi-position allocation.")
+
+    with intraday_tab:
+        st.subheader("Intraday Intelligence")
+        st.caption("5m/15m session analytics with opening range, gap playbook, pivots, and breakout failure stats.")
+
+        ic1, ic2, ic3 = st.columns(3)
+        intraday_name = ic1.selectbox("Intraday symbol", list(NIFTY_50_STOCKS.keys()), index=list(NIFTY_50_STOCKS.keys()).index(selected_name), key="intraday_symbol")
+        intraday_interval = ic2.selectbox("Timeframe", options=["5m", "15m"], index=0, key="intraday_interval")
+        intraday_period_days = int(ic3.slider("Intraday lookback (days)", min_value=1, max_value=10, value=5, step=1, key="intraday_days"))
+
+        opening_range_mins = int(
+            st.selectbox("Opening range window", options=[15, 30, 45, 60], index=1, key="intraday_or_window")
+        )
+
+        intraday_ticker = NIFTY_50_STOCKS[intraday_name]
+        with st.spinner("Fetching intraday bars..."):
+            intraday_df = fetch_intraday_data(intraday_ticker, interval=intraday_interval, period_days=intraday_period_days)
+
+        if intraday_df.empty:
+            st.warning("Intraday data unavailable for this ticker/timeframe right now.")
+        else:
+            or_stats = _compute_opening_range_stats(intraday_df, opening_range_mins)
+            touch_df, pivot_stats = _compute_intraday_pivot_reactions(intraday_df)
+            gap_playbook = _build_preopen_gap_playbook(intraday_ticker, intraday_df)
+
+            latest_price = float(intraday_df["Close"].iloc[-1]) if "Close" in intraday_df else 0.0
+            session_open = float(intraday_df[intraday_df.index.date == intraday_df.index[-1].date()]["Open"].iloc[0]) if "Open" in intraday_df else latest_price
+            intraday_move = ((latest_price - session_open) / session_open) * 100.0 if session_open > 0 else 0.0
+
+            mcols = st.columns(6)
+            mcols[0].metric("Live Price", f"{latest_price:.2f}")
+            mcols[1].metric("Session Move", f"{intraday_move:.2f}%")
+            mcols[2].metric("OR High", f"{float(or_stats.get('opening_high', 0.0)):.2f}")
+            mcols[3].metric("OR Low", f"{float(or_stats.get('opening_low', 0.0)):.2f}")
+            mcols[4].metric("Breakout Bias", str(or_stats.get("breakout_bias", "N/A")))
+            mcols[5].metric("Pivot Touches", f"{float(pivot_stats.get('pivot_touch_total', 0.0)):.0f}")
+
+            st.markdown("##### Pre-open Gap Playbook + Opening Auction Signal")
+            if gap_playbook:
+                g1, g2, g3, g4 = st.columns(4)
+                g1.metric("Gap %", f"{float(gap_playbook.get('gap_pct', 0.0)):.2f}%")
+                g2.metric("Auction Return", f"{float(gap_playbook.get('auction_return_pct', 0.0)):.2f}%")
+                g3.metric("Auction Volume Ratio", f"{float(gap_playbook.get('auction_volume_ratio', 1.0)):.2f}x")
+                g4.metric("Auction Signal", str(gap_playbook.get("auction_signal", "N/A")))
+                st.info(f"Playbook: {gap_playbook.get('playbook', 'N/A')}")
+            else:
+                st.info("Gap playbook data unavailable for this session.")
+
+            st.markdown("##### Live Session Dashboard")
+            chart_df = intraday_df.copy().reset_index().rename(columns={"index": "Timestamp"})
+            if "Datetime" in chart_df.columns:
+                chart_df = chart_df.rename(columns={"Datetime": "Timestamp"})
+            if "Timestamp" not in chart_df.columns:
+                chart_df["Timestamp"] = pd.to_datetime(chart_df.index)
+
+            base = alt.Chart(chart_df).encode(x=alt.X("Timestamp:T", title=None))
+            price_line = base.mark_line(color="#74c0fc", strokeWidth=2).encode(
+                y=alt.Y("Close:Q", title="Price")
+            )
+
+            overlays = []
+            if or_stats:
+                overlays.append(
+                    base.mark_rule(color="#f97316", strokeDash=[6, 4]).encode(y=alt.datum(float(or_stats.get("opening_high", 0.0))))
+                )
+                overlays.append(
+                    base.mark_rule(color="#ef4444", strokeDash=[6, 4]).encode(y=alt.datum(float(or_stats.get("opening_low", 0.0))))
+                )
+
+            if not touch_df.empty:
+                for level_row in touch_df.itertuples(index=False):
+                    color = "#22c55e" if str(level_row.Level).startswith("S") else "#a78bfa" if str(level_row.Level).startswith("R") else "#facc15"
+                    overlays.append(
+                        base.mark_rule(color=color, opacity=0.35).encode(y=alt.datum(float(level_row.Price)))
+                    )
+
+            chart = price_line
+            for layer in overlays:
+                chart = chart + layer
+            st.altair_chart(chart.properties(height=320).interactive(), use_container_width=True)
+
+            stat_cols = st.columns(2)
+            stat_cols[0].metric("Failed R1 Breakouts", f"{int(pivot_stats.get('failed_r1_breaks', 0))}")
+            stat_cols[1].metric("Failed S1 Breakdowns", f"{int(pivot_stats.get('failed_s1_breaks', 0))}")
+
+            st.markdown("##### Intraday Pivot Reactions")
+            if touch_df.empty:
+                st.info("Pivot reaction stats are not available yet.")
+            else:
+                st.dataframe(
+                    touch_df.style.format({"Price": "{:.2f}", "Touches": "{:.0f}"}),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
     with backtest_tab:
         st.subheader("Recommendation Backtest")
         log_df = load_recommendation_log()
@@ -1908,7 +2918,144 @@ def main() -> None:
                 )
 
             st.markdown("---")
-            st.caption("Note: Options chain and OI data are not available via free data sources. This analysis is based on price action and technical indicators.")
+            st.caption("Price-action analytics shown above are complemented by the Derivatives + Quant Lab tab for option-chain and probabilistic views.")
+
+    with derivatives_quant_tab:
+        st.subheader("Derivatives + Advanced Quant Lab")
+        st.caption("NIFTY option-chain analytics plus feature-store driven probabilistic ranking.")
+
+        st.markdown("#### Options and Derivatives Layer")
+        with st.spinner("Fetching NSE option-chain snapshot..."):
+            options_snapshot = fetch_nifty_option_chain("NIFTY")
+
+        if not options_snapshot:
+            st.warning("NSE option-chain snapshot is currently unavailable. Retry in a few seconds.")
+        else:
+            options_metrics, magnets_df = _compute_derivatives_insights(options_snapshot)
+            iv_percentile = _update_iv_history_and_percentile(
+                expiry=str(options_metrics.get("expiry", "N/A")),
+                atm_iv=float(options_metrics.get("atm_iv", 0.0)),
+            )
+
+            top_row = st.columns(6)
+            top_row[0].metric("NIFTY Spot", f"{float(options_metrics.get('underlying', 0.0)):.2f}")
+            top_row[1].metric("Put/Call OI Ratio", f"{float(options_metrics.get('pcr', 0.0)):.2f}")
+            top_row[2].metric("Max Pain", f"{float(options_metrics.get('max_pain', 0.0)):.0f}")
+            top_row[3].metric("Gamma Wall", f"{float(options_metrics.get('gamma_wall', 0.0)):.0f}")
+            top_row[4].metric("ATM IV", f"{float(options_metrics.get('atm_iv', 0.0)):.2f}")
+            top_row[5].metric("IV Percentile", f"{iv_percentile:.1f}%" if iv_percentile is not None else "N/A")
+
+            exp_cols = st.columns(2)
+            exp_cols[0].metric("Nearest Expiry", str(options_metrics.get("expiry", "N/A")))
+            dte = _days_to_expiry(str(options_metrics.get("expiry", "N/A")))
+            exp_cols[1].metric("Days To Expiry", str(dte) if dte is not None else "N/A")
+
+            st.markdown("##### Key Strike Magnets (OI + Gamma Concentration)")
+            if magnets_df.empty:
+                st.info("No strike-level magnet data available for this snapshot.")
+            else:
+                st.dataframe(
+                    magnets_df.style.format(
+                        {
+                            "strike": "{:.0f}",
+                            "total_oi": "{:,.0f}",
+                            "gamma_exposure": "{:,.2f}",
+                            "distance_to_spot_pct": "{:.2f}",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.markdown("#### Event-Day Mode")
+        inferred_dte = _days_to_expiry(str(options_metrics.get("expiry", "N/A"))) if options_snapshot else None
+        default_template = "Expiry Day" if inferred_dte is not None and inferred_dte <= 1 else "Normal Session"
+        event_mode = st.toggle(
+            "Enable event-day risk template",
+            value=False,
+            help="Apply stricter risk parameters for expiry and macro-event sessions.",
+            key="event_day_mode_toggle",
+        )
+        selected_template = st.selectbox(
+            "Risk template",
+            options=list(EVENT_DAY_RISK_TEMPLATES.keys()),
+            index=list(EVENT_DAY_RISK_TEMPLATES.keys()).index(default_template),
+            key="event_day_risk_template",
+        )
+        template = EVENT_DAY_RISK_TEMPLATES[selected_template if event_mode else "Normal Session"]
+        risk_cols = st.columns(4)
+        risk_cols[0].metric("Max Risk / Trade", f"{float(template['max_risk_per_trade_pct']):.2f}%")
+        risk_cols[1].metric("Max Open Positions", f"{int(template['max_open_positions'])}")
+        risk_cols[2].metric("Stop Buffer (ATR)", f"{float(template['stop_buffer_atr']):.2f}")
+        risk_cols[3].metric("Target Buffer (ATR)", f"{float(template['target_buffer_atr']):.2f}")
+
+        st.markdown("#### Advanced Analytics Layer")
+        st.caption("Feature store includes technical, sentiment, and lightweight fundamental factors; outputs blend rule-engine and ML rank.")
+
+        if st.button("Build Feature Store + Run Meta Model", key="run_advanced_analytics"):
+            with st.spinner("Building feature store and running probabilistic meta-model..."):
+                feature_df = build_feature_store_snapshot(
+                    days=days,
+                    finalized_only=finalized_only,
+                    use_live_news=use_live_news,
+                    max_news_items=news_items,
+                )
+
+                if feature_df.empty:
+                    st.warning("Feature store could not be built. Check connectivity or increase lookback.")
+                else:
+                    store_path = _persist_feature_store_snapshot(feature_df)
+                    meta_df = run_meta_model_blend(feature_df)
+                    st.session_state["latest_feature_store_df"] = feature_df
+                    st.session_state["latest_meta_df"] = meta_df
+                    st.success(f"Feature store updated: {store_path}")
+
+        feature_store_df = st.session_state.get("latest_feature_store_df")
+        meta_rank_df = st.session_state.get("latest_meta_df")
+
+        if isinstance(meta_rank_df, pd.DataFrame) and not meta_rank_df.empty:
+            st.markdown("##### Meta-Model Ranked Signals")
+            display_cols = [
+                "company",
+                "ticker",
+                "rule_recommendation",
+                "rule_score",
+                "ml_expected_return_pct",
+                "meta_score",
+                "meta_recommendation",
+                "prob_up",
+                "prob_down",
+                "prob_flat",
+                "expected_return_pct",
+            ]
+            available = [col for col in display_cols if col in meta_rank_df.columns]
+            st.dataframe(
+                meta_rank_df[available].head(20).style.format(
+                    {
+                        "rule_score": "{:.3f}",
+                        "ml_expected_return_pct": "{:.3f}",
+                        "meta_score": "{:.3f}",
+                        "prob_up": "{:.2%}",
+                        "prob_down": "{:.2%}",
+                        "prob_flat": "{:.2%}",
+                        "expected_return_pct": "{:.2f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.download_button(
+                "Download Meta-Model Rankings CSV",
+                data=meta_rank_df.to_csv(index=False),
+                file_name=f"meta_rankings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_meta_rankings",
+            )
+
+        if isinstance(feature_store_df, pd.DataFrame) and not feature_store_df.empty:
+            st.markdown("##### Latest Feature Store Snapshot")
+            st.dataframe(feature_store_df, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

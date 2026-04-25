@@ -55,6 +55,23 @@ tradingtool/
    - Uses logged recommendation snapshots
    - Maps each signal to next trading day
    - Hit-rate, average return, cumulative return, and breakdown tables
+- Derivatives + Quant Lab tab:
+   - Pulls NSE NIFTY option-chain snapshot (nearest expiry)
+   - Computes OI metrics: PCR, total CE/PE OI, max pain, gamma wall
+   - Tracks ATM IV and rolling IV percentile from local history
+   - Surfaces key strike magnets using OI + gamma concentration
+   - Includes event-day risk templates (Normal / Expiry / Macro Event)
+   - Builds cross-sectional feature store (technical + sentiment + lightweight fundamentals)
+   - Produces probabilistic signal outputs and meta-model ranked recommendations
+- Portfolio Lab tab:
+   - Multi-position construction from verdict candidates
+   - Correlation-aware capital allocation with max sector exposure control
+   - Drawdown guardrails with VaR/CVaR risk estimates
+   - Sector exposure and correlation matrix views
+- Intraday Intelligence tab:
+   - 5m/15m intraday timeframe support with configurable opening range window
+   - Pre-open gap playbook and opening auction signal classification
+   - Live session dashboard for pivot reactions and breakout failure statistics
 - Modernized Streamlit UI with custom typography, gradient hero card, and improved information hierarchy.
 
 ## Current Logic
@@ -87,6 +104,28 @@ tradingtool/
    - Applies policy-mode thresholds and ATR multipliers (Aggressive/Moderate/Conservative)
    - Calculates quantity using fixed risk budget per trade
    - Returns the top 3 setups by score strength and risk-reward quality
+- Derivatives + advanced analytics logic:
+   - Option-chain data from NSE API (`option-chain-indices`) filtered to nearest expiry
+   - Max pain computed by minimizing expiry payoff pain across strikes
+   - Gamma wall estimated from strike-level gamma exposure (`CE_gamma * CE_OI + PE_gamma * PE_OI`)
+   - IV percentile computed from persisted ATM IV observations in `data/nifty_iv_history.csv`
+   - Feature store persisted in `data/feature_store.csv` with:
+      - Technical factors: RSI, MACD spread, SMA/EMA gaps, momentum, volatility, volume z-score
+      - Sentiment factor: average ticker headline sentiment
+      - Fundamental factors (when available): trailing PE, market cap, beta
+   - Meta-model blend:
+      - Rule score + ridge-regularized linear ML estimate of expected return
+      - Probabilities for Up / Down / Flat and expected return estimate
+- Portfolio construction logic:
+   - Uses verdict pool as candidate universe
+   - Penalizes highly-correlated names during allocation
+   - Enforces sector exposure caps and allocation headroom
+   - Computes portfolio VaR(95), CVaR(95), and max drawdown from historical daily returns
+- Intraday logic:
+   - Pulls intraday bars via yfinance (`5m`/`15m`)
+   - Computes opening range high/low and breakout bias
+   - Detects failed breakouts around R1/S1 pivot regions
+   - Generates gap/auction playbook using session open vs previous close and early-bar momentum/volume
 
 ## Backtesting Log
 

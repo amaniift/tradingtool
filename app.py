@@ -192,74 +192,148 @@ def inject_modern_theme() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
 
         :root {
-            --bg-soft: #0b1120;
-            --bg-card: #161e31;
-            --ink-strong: #f8fafc;
-            --ink-muted: #94a3b8;
-            --ink-soft: #64748b;
-            --accent: #3b82f6;
-            --accent-2: #10b981;
-            --line: #334155;
-            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.24);
+            --bg: #06101f;
+            --bg-2: #0b1630;
+            --card: rgba(15, 23, 42, 0.78);
+            --card-strong: rgba(17, 24, 39, 0.92);
+            --line: rgba(148, 163, 184, 0.18);
+            --text: #eff6ff;
+            --muted: #9fb2cb;
+            --soft: #6b7c93;
+            --accent: #38bdf8;
+            --accent-2: #34d399;
+            --accent-3: #f59e0b;
+            --danger: #f87171;
+            --shadow: 0 22px 55px rgba(0, 0, 0, 0.35);
+            --radius: 20px;
         }
 
         .stApp {
-            background-color: var(--bg-soft);
-            background-image: 
-                radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.1), transparent 30%),
-                radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.08), transparent 30%);
-            color: var(--ink-strong);
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 28%),
+                radial-gradient(circle at top right, rgba(52, 211, 153, 0.10), transparent 24%),
+                linear-gradient(180deg, var(--bg) 0%, #081224 38%, #060c18 100%);
+            color: var(--text);
             font-family: 'Inter', sans-serif;
         }
 
         .block-container {
-            max-width: 1200px;
-            padding-top: 2rem;
+            max-width: 1440px;
+            padding-top: 1.4rem;
             padding-bottom: 2rem;
         }
 
-        h1, h2, h3, h4 {
+        h1, h2, h3, h4, h5 {
             font-family: 'Space Grotesk', sans-serif;
-            letter-spacing: -0.02em;
-            color: var(--ink-strong);
-            margin-top: 0.5rem;
+            letter-spacing: -0.03em;
+            color: var(--text);
         }
 
         p, label, li, span, small, [data-testid="stMarkdownContainer"] {
-            color: var(--ink-muted);
+            color: var(--muted);
+        }
+
+        .dashboard-shell {
+            border: 1px solid var(--line);
+            border-radius: 28px;
+            background: linear-gradient(180deg, rgba(12, 18, 33, 0.84), rgba(8, 13, 24, 0.92));
+            box-shadow: var(--shadow);
+            padding: 1.35rem;
+            margin-bottom: 1.2rem;
         }
 
         .hero-card {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-            border: 1px solid #334155;
-            border-radius: 16px;
-            padding: 2rem;
-            color: var(--ink-strong);
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
-            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(6, 10, 20, 0.96)),
+                radial-gradient(circle at top right, rgba(56, 189, 248, 0.18), transparent 25%),
+                radial-gradient(circle at bottom left, rgba(52, 211, 153, 0.12), transparent 20%);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 28px;
+            padding: 1.6rem 1.75rem;
+            box-shadow: var(--shadow);
+            margin-bottom: 1.25rem;
+        }
+
+        .hero-card::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.10), transparent 45%, rgba(52, 211, 153, 0.06));
+            pointer-events: none;
         }
 
         .hero-title {
-            font-size: 1.5rem;
+            font-size: 1.95rem;
             font-weight: 800;
+            line-height: 1.05;
             margin: 0;
-            background: linear-gradient(135deg, #60a5fa 0%, #34d399 100%);
+            color: var(--text);
+        }
+
+        .hero-accent {
+            background: linear-gradient(135deg, #7dd3fc 0%, #34d399 55%, #fbbf24 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
         .hero-sub {
-            margin: 0.5rem 0 0;
-            color: var(--ink-muted);
-            font-size: 0.95rem;
+            margin: 0.55rem 0 0;
+            max-width: 68rem;
+            color: var(--muted);
+            font-size: 0.98rem;
+            line-height: 1.55;
+        }
+
+        .hero-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin-top: 1rem;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.46rem 0.8rem;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            color: #dbeafe;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+
+        .hero-badge strong {
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .section-card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 1rem 1.1rem 0.9rem;
+            margin: 1rem 0;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.18);
+        }
+
+        .section-card h3,
+        .section-card h4 {
+            margin-top: 0;
         }
 
         section[data-testid="stSidebar"] {
-            background-color: #0f172a;
-            border-right: 1px solid #1e293b;
+            background:
+                linear-gradient(180deg, rgba(7, 12, 24, 0.96), rgba(10, 18, 35, 0.96));
+            border-right: 1px solid rgba(148, 163, 184, 0.16);
         }
 
         section[data-testid="stSidebar"] * {
@@ -268,183 +342,243 @@ def inject_modern_theme() -> None:
 
         section[data-testid="stSidebar"] [data-baseweb="select"] > div,
         section[data-testid="stSidebar"] [data-baseweb="base-input"] > div,
-        section[data-testid="stSidebar"] .stButton > button {
-            background-color: #1e293b;
-            border: 1px solid #334155;
+        section[data-testid="stSidebar"] .stButton > button,
+        section[data-testid="stSidebar"] .stMultiSelect > div {
+            background: rgba(15, 23, 42, 0.82);
+            border: 1px solid rgba(148, 163, 184, 0.18);
             box-shadow: none;
-            border-radius: 8px;
+            border-radius: 14px;
         }
 
         section[data-testid="stSidebar"] .stButton > button:hover {
-            border-color: #3b82f6;
-            background-color: #0f172a;
+            border-color: rgba(56, 189, 248, 0.55);
+            background: rgba(8, 15, 28, 0.96);
         }
 
         .stTabs [data-baseweb="tab-list"] {
             gap: 0.5rem;
-            border-bottom: 2px solid #1e293b;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+            padding-bottom: 0.25rem;
         }
 
         .stTabs [data-baseweb="tab"] {
-            color: #94a3b8 !important;
-            background: transparent;
-            border: none;
-            padding: 0.75rem 1rem;
-            font-weight: 600;
+            color: var(--muted) !important;
+            background: rgba(15, 23, 42, 0.55);
+            border: 1px solid transparent;
+            border-radius: 999px;
+            padding: 0.72rem 1rem;
+            font-weight: 700;
             font-family: 'Space Grotesk', sans-serif;
-            transition: all 0.2s ease;
+            transition: all 0.22s ease;
+        }
+
+        .stTabs [data-baseweb="tab"]:hover {
+            color: #ffffff !important;
+            border-color: rgba(56, 189, 248, 0.35);
+            background: rgba(15, 23, 42, 0.9);
         }
 
         .stTabs [aria-selected="true"] {
-            color: #f8fafc !important;
-            background: transparent;
-            border-bottom: 2px solid #3b82f6 !important;
-            box-shadow: none;
+            color: #ffffff !important;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(52, 211, 153, 0.16));
+            border: 1px solid rgba(56, 189, 248, 0.45) !important;
+            box-shadow: 0 10px 20px rgba(8, 15, 28, 0.26);
         }
 
         [data-testid="stMetric"] {
-            background: rgba(30, 41, 59, 0.5);
-            backdrop-filter: blur(12px);
-            border: 1px solid #334155;
-            border-radius: 12px;
-            padding: 1rem 1.25rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            position: relative;
+            background: linear-gradient(180deg, rgba(14, 22, 38, 0.86), rgba(8, 14, 26, 0.92));
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            border-radius: 18px;
+            padding: 1rem 1.1rem;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        }
+
+        [data-testid="stMetric"]::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 18px;
+            padding: 1px;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.35), rgba(52, 211, 153, 0.12));
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            opacity: 0.4;
         }
 
         [data-testid="stMetric"]:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-            border-color: #475569;
+            box-shadow: 0 18px 36px rgba(0, 0, 0, 0.30);
+            border-color: rgba(56, 189, 248, 0.35);
         }
 
         [data-testid="stMetricLabel"] {
-            color: #94a3b8;
-            font-weight: 500;
-            font-size: 0.875rem;
-            letter-spacing: 0.02em;
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 0.82rem;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
         }
 
         [data-testid="stMetricValue"] {
-            color: #f8fafc;
+            color: var(--text);
             font-family: 'Space Grotesk', sans-serif;
             font-weight: 700;
-            font-size: 1.5rem;
+            font-size: 1.42rem;
         }
 
-        /* Enhanced scrollbar for premium feel */
+        [data-testid="stMetricDelta"] {
+            color: #cbd5e1;
+        }
+
         ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
         }
+
         ::-webkit-scrollbar-track {
-            background: #0f172a;
+            background: #081222;
         }
+
         ::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 4px;
+            background: linear-gradient(180deg, #334155, #1d4ed8);
+            border-radius: 999px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
-            background: #475569;
+            background: linear-gradient(180deg, #475569, #2563eb);
         }
 
         .stButton > button {
-            border-radius: 8px;
-            border: 1px solid #334155;
-            background: #1e293b;
+            border-radius: 14px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: linear-gradient(135deg, rgba(17, 24, 39, 0.92), rgba(15, 23, 42, 0.88));
             color: #f8fafc;
-            font-weight: 600;
-            padding: 0.5rem 1rem;
-            transition: all 0.2s ease;
+            font-weight: 700;
+            padding: 0.62rem 1rem;
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
         }
 
         .stButton > button:hover {
-            border-color: #3b82f6;
-            background: #0f172a;
-            color: #60a5fa;
+            border-color: rgba(56, 189, 248, 0.5);
+            box-shadow: 0 12px 24px rgba(8, 15, 28, 0.35);
             transform: translateY(-1px);
         }
 
         [data-baseweb="base-input"] > div,
         [data-baseweb="select"] > div,
-        .stNumberInput > div > div {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 8px;
+        .stNumberInput > div > div,
+        .stTextInput > div > div,
+        .stDateInput > div > div {
+            background: rgba(11, 18, 32, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 14px;
             color: #f8fafc;
         }
 
         .stSlider [data-baseweb="slider"] div[role="slider"] {
-            border-color: #3b82f6;
-            background: #3b82f6;
+            border-color: var(--accent);
+            background: var(--accent);
         }
-        
+
         .stSlider [data-baseweb="slider"] div[data-testid="stTickBar"] {
-            background-color: #334155;
+            background-color: rgba(148, 163, 184, 0.2);
         }
 
         div[data-testid="stExpander"] {
-            background: #161e31;
-            border: 1px solid #334155;
-            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.78);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 18px;
         }
 
         div[data-testid="stExpander"] summary {
-            color: #f8fafc;
-            font-weight: 600;
+            color: #ffffff;
+            font-weight: 700;
         }
-        
+
         div[data-testid="stExpander"] summary:hover {
-            color: #60a5fa;
+            color: #7dd3fc;
         }
-        
+
         .stAlert {
-            background-color: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.82);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 16px;
             color: #f8fafc;
         }
-                }
 
-                .stAlert {
-                    border-radius: 12px;
-                    border: 1px solid #d6e1ee;
-                    color: var(--ink-strong);
-                }
+        .stCaption {
+            color: var(--soft) !important;
+            font-size: 0.89rem;
+        }
 
-                .stDataFrame, div[data-testid="stTable"] {
-                    border: 1px solid #d2ddec;
-                    border-radius: 12px;
-                    overflow: hidden;
-                }
+        .stDataFrame, div[data-testid="stTable"] {
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+        }
 
-                .stDataFrame * {
-                    color: #1b304b !important;
-                }
+        .stDataFrame * {
+            color: #dbeafe !important;
+        }
 
-                .stCaption {
-                    color: var(--ink-soft) !important;
-                    font-size: 0.9rem;
-                }
+        div[data-testid="stDataFrame"] > div {
+            background: rgba(8, 14, 26, 0.8);
+        }
 
-                @media (max-width: 900px) {
-                    .block-container {
-                        padding-top: 0.8rem;
-                    }
+        .section-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.3), transparent);
+            margin: 1rem 0;
+        }
 
-                    .hero-card {
-                        padding: 1rem;
-                    }
+        .subtle-kicker {
+            color: #7dd3fc;
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
 
-                    .hero-title {
-                        font-size: 1rem;
-                    }
+        .panel-title {
+            color: #ffffff;
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin: 0 0 0.25rem;
+        }
 
-                    .stTabs [data-baseweb="tab"] {
-                        font-size: 0.86rem;
-                        padding: 0.46rem 0.64rem;
-                    }
-                }
+        .panel-subtitle {
+            color: var(--muted);
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 900px) {
+            .block-container {
+                padding-top: 0.85rem;
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+            }
+
+            .hero-card {
+                padding: 1.1rem 1rem;
+                border-radius: 22px;
+            }
+
+            .hero-title {
+                font-size: 1.42rem;
+            }
+
+            .stTabs [data-baseweb="tab"] {
+                font-size: 0.86rem;
+                padding: 0.56rem 0.8rem;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -461,6 +595,55 @@ def _safe_float(value: float | None, default: float = 0.0) -> float:
     if value_f != value_f:
         return default
     return value_f
+
+
+def _clamp(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
+    """Clamp a numeric value into a bounded range."""
+    return max(lower, min(upper, value))
+
+
+def _tanh_score(value: float, scale: float) -> float:
+    """Map a raw value to a smooth -1..1 score."""
+    if scale <= 0:
+        return 0.0
+    return math.tanh(value / scale)
+
+
+def _relative_gap(current: float, reference: float) -> float:
+    """Return percentage gap vs a reference price."""
+    if current <= 0 or reference <= 0:
+        return 0.0
+    return ((current - reference) / reference) * 100.0
+
+
+def _continuous_signal_components(
+    rsi_value: float,
+    macd_value: float,
+    macd_signal_value: float,
+    close_value: float,
+    sma_20_value: float,
+    sma_50_value: float | None = None,
+) -> dict[str, float]:
+    """Build smooth, magnitude-aware signal components for recommendation logic."""
+    rsi_component = _tanh_score(50.0 - rsi_value, 12.0)
+    macd_scale = max(abs(close_value) * 0.0025, 0.75)
+    macd_component = _tanh_score(macd_value - macd_signal_value, macd_scale)
+
+    trend20_gap = _relative_gap(close_value, sma_20_value)
+    trend20_component = _tanh_score(trend20_gap, 1.6)
+
+    if sma_50_value is None:
+        trend50_component = trend20_component * 0.55
+    else:
+        trend50_gap = _relative_gap(close_value, sma_50_value)
+        trend50_component = _tanh_score(trend50_gap, 2.4)
+
+    return {
+        "rsi_component": _clamp(rsi_component),
+        "macd_component": _clamp(macd_component),
+        "trend20_component": _clamp(trend20_component),
+        "trend50_component": _clamp(trend50_component),
+    }
 
 
 def _render_price_structure_chart(
@@ -559,18 +742,25 @@ def generate_recommendation(
     avg_news_sentiment: float,
 ) -> tuple[str, float, float, float]:
     """Blend technical and sentiment signals into BUY/SELL/HOLD."""
-    rsi_signal = 1.0 if rsi_value < 30 else -1.0 if rsi_value > 70 else 0.0
-    macd_signal = 1.0 if macd_value > macd_signal_value else - \
-        1.0 if macd_value < macd_signal_value else 0.0
-    trend_signal = 1.0 if close_value > sma_20_value else -1.0
+    components = _continuous_signal_components(
+        rsi_value=rsi_value,
+        macd_value=macd_value,
+        macd_signal_value=macd_signal_value,
+        close_value=close_value,
+        sma_20_value=sma_20_value,
+    )
 
-    technical_score = (0.45 * rsi_signal) + \
-        (0.35 * macd_signal) + (0.20 * trend_signal)
-    combined_score = (0.65 * technical_score) + (0.35 * avg_news_sentiment)
+    technical_score = (
+        0.34 * components["rsi_component"]
+        + 0.38 * components["macd_component"]
+        + 0.28 * components["trend20_component"]
+    )
+    sentiment_score = _clamp(avg_news_sentiment)
+    combined_score = (0.72 * technical_score) + (0.28 * sentiment_score)
 
-    if combined_score >= 0.25:
+    if combined_score >= 0.20:
         return "BUY", combined_score, technical_score, avg_news_sentiment
-    if combined_score <= -0.25:
+    if combined_score <= -0.20:
         return "SELL", combined_score, technical_score, avg_news_sentiment
     return "HOLD", combined_score, technical_score, avg_news_sentiment
 
@@ -1829,19 +2019,25 @@ def build_verdict_candidates(
         if atr <= 0:
             atr = close_value * 0.008
 
-        # Score model: trend + momentum + oscillator + MACD spread.
-        rsi_component = max(min((rsi_value - 50.0) / 20.0, 1.0), -1.0)
-        macd_component = 1.0 if macd_value > macd_signal_value else -1.0
-        trend20_component = 1.0 if close_value >= sma_20_value else -1.0
-        trend50_component = 1.0 if sma_20_value >= sma_50_value else -1.0
-        momentum_component = max(min(momentum_5 / 0.04, 1.0), -1.0)
+        components = _continuous_signal_components(
+            rsi_value=rsi_value,
+            macd_value=macd_value,
+            macd_signal_value=macd_signal_value,
+            close_value=close_value,
+            sma_20_value=sma_20_value,
+            sma_50_value=sma_50_value,
+        )
+        momentum_component = _tanh_score(momentum_5 * 100.0, 3.5)
+        volatility_ratio = atr / close_value if close_value > 0 else 0.0
+        volatility_penalty = _clamp((volatility_ratio / 0.03) - 1.0, 0.0, 1.0)
 
         score = (
-            0.28 * rsi_component
-            + 0.24 * macd_component
-            + 0.20 * trend20_component
-            + 0.13 * trend50_component
-            + 0.15 * momentum_component
+            0.26 * components["rsi_component"]
+            + 0.24 * components["macd_component"]
+            + 0.20 * components["trend20_component"]
+            + 0.16 * components["trend50_component"]
+            + 0.14 * momentum_component
+            - 0.05 * volatility_penalty
         )
 
         if score >= score_threshold:
@@ -1975,9 +2171,10 @@ def main() -> None:
 
     st.markdown(
         """
-        <div class="hero-card">
-          <p class="hero-title">NSE Signal Studio</p>
-          <p class="hero-sub">Latest EOD refresh, live news sentiment, NIFTY 50 pulse scanner, and backtest analytics.</p>
+                <div class="hero-card">
+                    <div class="subtle-kicker">Market Intelligence Workspace</div>
+                    <p class="hero-title"><span class="hero-accent">NSE Signal Studio</span></p>
+                    <p class="hero-sub">A modern trading cockpit for EOD signals, derivatives context, portfolio construction, intraday intelligence, and backtesting.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1985,7 +2182,10 @@ def main() -> None:
 
     st.sidebar.header("Controls")
     selected_name = st.sidebar.selectbox(
-        "Select NIFTY 50 stock", list(NIFTY_50_STOCKS.keys()))
+        "Select NIFTY 50 stock",
+        list(NIFTY_50_STOCKS.keys()),
+        index=0,
+    )
     selected_ticker = NIFTY_50_STOCKS[selected_name]
     days = st.sidebar.slider(
         "Lookback days", min_value=45, max_value=252, value=90, step=5)

@@ -658,7 +658,8 @@ def _render_price_structure_chart(
         return
 
     available_series = ["Close", "SMA_20", "EMA_20", "SMA_50"]
-    requested_series = [series for series in selected_series if series in available_series]
+    requested_series = [
+        series for series in selected_series if series in available_series]
     if not requested_series:
         st.info("Selected series are unavailable for this chart.")
         return
@@ -710,7 +711,8 @@ def _render_price_structure_chart(
                 title="Price",
                 scale=alt.Scale(domain=y_domain, zero=False),
             ),
-            color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(orient="top")),
+            color=alt.Color("Series:N", scale=color_scale,
+                            legend=alt.Legend(orient="top")),
             tooltip=[
                 alt.Tooltip("Date:T", title="Date"),
                 alt.Tooltip("Series:N", title="Series"),
@@ -1091,7 +1093,8 @@ def _calculate_support_resistance_levels(
     recent_high = recent_df["High"].astype(float)
     recent_low = recent_df["Low"].astype(float)
     atr = _compute_atr(recent_df, period=min(14, max(5, len(recent_df) // 4)))
-    tolerance = max(current_close * 0.006, atr * 0.6 if atr > 0 else current_close * 0.006)
+    tolerance = max(current_close * 0.006, atr * 0.6 if atr >
+                    0 else current_close * 0.006)
     window_size = (pivot_window * 2) + 1
 
     low_roll = recent_low.rolling(window=window_size, center=True).min()
@@ -1128,18 +1131,22 @@ def _calculate_support_resistance_levels(
             weighted_prices = []
             weighted_scores = []
             for point_date, point_price in cluster_points:
-                age_days = max((recent_df.index[-1] - pd.Timestamp(point_date)).days, 0)
-                recency_weight = 1.0 + max(0.0, (lookback_days - age_days) / lookback_days)
+                age_days = max(
+                    (recent_df.index[-1] - pd.Timestamp(point_date)).days, 0)
+                recency_weight = 1.0 + \
+                    max(0.0, (lookback_days - age_days) / lookback_days)
                 weighted_prices.append(point_price * recency_weight)
                 weighted_scores.append(recency_weight)
 
             cluster_level = sum(weighted_prices) / sum(weighted_scores)
             if side == "support":
                 side_series = recent_low
-                distance_pct = ((current_close - cluster_level) / current_close) * 100.0
+                distance_pct = (
+                    (current_close - cluster_level) / current_close) * 100.0
             else:
                 side_series = recent_high
-                distance_pct = ((cluster_level - current_close) / current_close) * 100.0
+                distance_pct = (
+                    (cluster_level - current_close) / current_close) * 100.0
 
             touch_mask = (side_series.sub(cluster_level).abs() <= tolerance)
             touch_count = int(touch_mask.sum())
@@ -1147,9 +1154,12 @@ def _calculate_support_resistance_levels(
                 continue
 
             last_actual_touch = recent_df.index[touch_mask].max()
-            last_touch_days = int((recent_df.index[-1] - last_actual_touch).days)
-            recency_bonus = max(0.0, 1.0 - (last_touch_days / max(lookback_days, 1)))
-            strength = (touch_count * (1.0 + recency_bonus)) + (len(cluster_points) * 0.35)
+            last_touch_days = int(
+                (recent_df.index[-1] - last_actual_touch).days)
+            recency_bonus = max(
+                0.0, 1.0 - (last_touch_days / max(lookback_days, 1)))
+            strength = (touch_count * (1.0 + recency_bonus)) + \
+                (len(cluster_points) * 0.35)
 
             level_rows.append(
                 {
@@ -1185,7 +1195,8 @@ def fetch_nifty50_index_data(days: int) -> pd.DataFrame:
     try:
         index_df = yf.download(
             index_ticker,
-            start=(pd.Timestamp.today() - pd.Timedelta(days=days + 30)).strftime("%Y-%m-%d"),
+            start=(pd.Timestamp.today() -
+                   pd.Timedelta(days=days + 30)).strftime("%Y-%m-%d"),
             end=pd.Timestamp.today().strftime("%Y-%m-%d"),
             interval="1d",
             progress=False,
@@ -1208,8 +1219,10 @@ def fetch_nifty50_index_data(days: int) -> pd.DataFrame:
         index_df["Volume"] = 0
 
     close_series = index_df["Close"].astype(float)
-    high_series = index_df["High"].astype(float) if "High" in index_df else close_series
-    low_series = index_df["Low"].astype(float) if "Low" in index_df else close_series
+    high_series = index_df["High"].astype(
+        float) if "High" in index_df else close_series
+    low_series = index_df["Low"].astype(
+        float) if "Low" in index_df else close_series
 
     delta = close_series.diff()
     gain = delta.where(delta > 0, 0.0)
@@ -1264,8 +1277,10 @@ def calculate_market_breadth(df: pd.DataFrame) -> dict:
     pct_above_20 = (above_sma20 / total * 100) if total > 0 else 0
     pct_above_50 = (above_sma50 / total * 100) if total > 0 else 0
 
-    recent_returns = df["DAILY_RETURN_PCT"].tail(5) if "DAILY_RETURN_PCT" in df else pd.Series()
-    trend_strength = "Strong" if recent_returns.mean() > 0.5 else "Weak" if recent_returns.mean() < -0.5 else "Neutral"
+    recent_returns = df["DAILY_RETURN_PCT"].tail(
+        5) if "DAILY_RETURN_PCT" in df else pd.Series()
+    trend_strength = "Strong" if recent_returns.mean(
+    ) > 0.5 else "Weak" if recent_returns.mean() < -0.5 else "Neutral"
 
     return {
         "percent_above_sma20": f"{pct_above_20:.1f}%",
@@ -1303,7 +1318,8 @@ def _calculate_next_session_pivots(index_df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     pivot_df = pd.DataFrame(levels)
-    pivot_df["Distance to Close (%)"] = ((pivot_df["Price"] - close_value) / close_value) * 100.0
+    pivot_df["Distance to Close (%)"] = (
+        (pivot_df["Price"] - close_value) / close_value) * 100.0
     return pivot_df
 
 
@@ -1343,7 +1359,8 @@ def _compute_derivatives_insights(snapshot: dict) -> tuple[dict[str, float | str
     if underlying > 0:
         atm_idx = (df["strike"] - underlying).abs().idxmin()
         atm_row = df.loc[atm_idx]
-        iv_values = [v for v in [atm_row.get("ce_iv", 0.0), atm_row.get("pe_iv", 0.0)] if v and v > 0]
+        iv_values = [v for v in [atm_row.get(
+            "ce_iv", 0.0), atm_row.get("pe_iv", 0.0)] if v and v > 0]
         atm_iv = float(sum(iv_values) / len(iv_values)) if iv_values else 0.0
     else:
         atm_iv = 0.0
@@ -1362,12 +1379,16 @@ def _compute_derivatives_insights(snapshot: dict) -> tuple[dict[str, float | str
             min_pain = pain
             max_pain_strike = settlement
 
-    df["gamma_exposure"] = (df["ce_gamma"] * df["ce_oi"]) + (df["pe_gamma"] * df["pe_oi"])
-    gamma_wall = float(df.loc[df["gamma_exposure"].idxmax(), "strike"]) if not df.empty else 0.0
+    df["gamma_exposure"] = (df["ce_gamma"] * df["ce_oi"]) + \
+        (df["pe_gamma"] * df["pe_oi"])
+    gamma_wall = float(
+        df.loc[df["gamma_exposure"].idxmax(), "strike"]) if not df.empty else 0.0
     df["total_oi"] = df["ce_oi"] + df["pe_oi"]
-    magnets = df.sort_values(["total_oi", "gamma_exposure"], ascending=[False, False]).head(6).copy()
+    magnets = df.sort_values(["total_oi", "gamma_exposure"], ascending=[
+                             False, False]).head(6).copy()
     if underlying > 0:
-        magnets["distance_to_spot_pct"] = ((magnets["strike"] - underlying) / underlying) * 100.0
+        magnets["distance_to_spot_pct"] = (
+            (magnets["strike"] - underlying) / underlying) * 100.0
     else:
         magnets["distance_to_spot_pct"] = 0.0
 
@@ -1406,7 +1427,8 @@ def _update_iv_history_and_percentile(expiry: str, atm_iv: float) -> float | Non
     else:
         hist_df = pd.DataFrame(columns=["as_of_date", "expiry", "atm_iv"])
 
-    hist_df = hist_df[~((hist_df["as_of_date"].astype(str) == today) & (hist_df["expiry"].astype(str) == expiry))]
+    hist_df = hist_df[~((hist_df["as_of_date"].astype(str) == today) & (
+        hist_df["expiry"].astype(str) == expiry))]
     hist_df = pd.concat([hist_df, new_row], ignore_index=True)
     hist_df["atm_iv"] = pd.to_numeric(hist_df["atm_iv"], errors="coerce")
     hist_df = hist_df.dropna(subset=["atm_iv"])
@@ -1458,17 +1480,23 @@ def build_feature_store_snapshot(days: int, finalized_only: bool, use_live_news:
         macd = _safe_float(latest.get("MACD"), 0.0)
         macd_signal = _safe_float(latest.get("MACD_SIGNAL"), 0.0)
         rsi = _safe_float(latest.get("RSI_14"), 50.0)
-        daily_return_std = float(eod_df["DAILY_RETURN_PCT"].tail(20).std()) if "DAILY_RETURN_PCT" in eod_df else 0.0
+        daily_return_std = float(eod_df["DAILY_RETURN_PCT"].tail(
+            20).std()) if "DAILY_RETURN_PCT" in eod_df else 0.0
         momentum_5d = float(eod_df["Close"].pct_change(5).iloc[-1] * 100.0)
-        next_day_target = float(eod_df["Close"].pct_change().shift(-1).iloc[-2] * 100.0) if len(eod_df) > 6 else 0.0
+        next_day_target = float(eod_df["Close"].pct_change(
+        ).shift(-1).iloc[-2] * 100.0) if len(eod_df) > 6 else 0.0
 
-        vol_mean = float(eod_df["Volume"].tail(20).mean()) if "Volume" in eod_df else 0.0
-        vol_std = float(eod_df["Volume"].tail(20).std()) if "Volume" in eod_df else 0.0
+        vol_mean = float(eod_df["Volume"].tail(
+            20).mean()) if "Volume" in eod_df else 0.0
+        vol_std = float(eod_df["Volume"].tail(20).std()
+                        ) if "Volume" in eod_df else 0.0
         latest_vol = _safe_float(latest.get("Volume"), 0.0)
         volume_z = ((latest_vol - vol_mean) / vol_std) if vol_std > 0 else 0.0
 
-        news_df = fetch_news_sentiment(ticker, max_items=max_news_items, use_live_news=use_live_news)
-        news_sentiment = float(news_df["sentiment_score"].mean()) if not news_df.empty else 0.0
+        news_df = fetch_news_sentiment(
+            ticker, max_items=max_news_items, use_live_news=use_live_news)
+        news_sentiment = float(
+            news_df["sentiment_score"].mean()) if not news_df.empty else 0.0
 
         recommendation, combined_score, technical_score, _ = generate_recommendation(
             rsi_value=rsi,
@@ -1527,7 +1555,8 @@ def _persist_feature_store_snapshot(feature_df: pd.DataFrame) -> Path:
     FEATURE_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     write_header = not FEATURE_STORE_PATH.exists()
     mode = "a"
-    feature_df.to_csv(FEATURE_STORE_PATH, mode=mode, header=write_header, index=False)
+    feature_df.to_csv(FEATURE_STORE_PATH, mode=mode,
+                      header=write_header, index=False)
     return FEATURE_STORE_PATH
 
 
@@ -1552,7 +1581,8 @@ def _fit_meta_linear_model(feature_df: pd.DataFrame) -> tuple[np.ndarray, pd.Ser
     ridge_lambda = 0.8
     ridge_eye = np.eye(x_mat.shape[1])
     ridge_eye[0, 0] = 0.0
-    beta = np.linalg.pinv(x_mat.T @ x_mat + ridge_lambda * ridge_eye) @ x_mat.T @ y.values
+    beta = np.linalg.pinv(
+        x_mat.T @ x_mat + ridge_lambda * ridge_eye) @ x_mat.T @ y.values
     return beta, mu, sigma
 
 
@@ -1561,7 +1591,8 @@ def _build_probabilistic_outlook(rule_score: float, ml_return_pct: float, volati
     ml_score = max(min(ml_return_pct / 1.5, 2.5), -2.5)
     vol_penalty = min(max(volatility_pct / 2.5, 0.0), 1.2)
     up_logit = (1.1 * rule_score) + (0.75 * ml_score) - (0.25 * vol_penalty)
-    down_logit = (-1.1 * rule_score) + (-0.75 * ml_score) - (0.25 * vol_penalty)
+    down_logit = (-1.1 * rule_score) + \
+        (-0.75 * ml_score) - (0.25 * vol_penalty)
     flat_logit = 0.35 + (0.45 * vol_penalty) - (0.25 * abs(rule_score))
 
     p_up, p_down, p_flat = _softmax([up_logit, down_logit, flat_logit])
@@ -1587,10 +1618,12 @@ def run_meta_model_blend(feature_df: pd.DataFrame) -> pd.DataFrame:
         beta, mu, sigma = model
         x_live = out[META_FEATURE_COLUMNS].astype(float)
         x_live_scaled = (x_live - mu) / sigma
-        x_live_mat = np.column_stack([np.ones(len(x_live_scaled.index)), x_live_scaled.values])
+        x_live_mat = np.column_stack(
+            [np.ones(len(x_live_scaled.index)), x_live_scaled.values])
         out["ml_expected_return_pct"] = x_live_mat @ beta
 
-    out["ml_score"] = out["ml_expected_return_pct"].apply(lambda v: max(min(v / 1.6, 1.0), -1.0))
+    out["ml_score"] = out["ml_expected_return_pct"].apply(
+        lambda v: max(min(v / 1.6, 1.0), -1.0))
     out["meta_score"] = (0.58 * out["rule_score"]) + (0.42 * out["ml_score"])
 
     prob_rows = []
@@ -1608,7 +1641,8 @@ def run_meta_model_blend(feature_df: pd.DataFrame) -> pd.DataFrame:
     out["meta_recommendation"] = out["meta_score"].apply(
         lambda s: "BUY" if s >= 0.20 else "SELL" if s <= -0.20 else "HOLD"
     )
-    out = out.sort_values(["meta_score", "ml_expected_return_pct"], ascending=[False, False]).reset_index(drop=True)
+    out = out.sort_values(["meta_score", "ml_expected_return_pct"], ascending=[
+                          False, False]).reset_index(drop=True)
     return out
 
 
@@ -1655,7 +1689,8 @@ def _compute_opening_range_stats(intraday_df: pd.DataFrame, opening_range_mins: 
         return {}
 
     if len(session_df.index) >= 2:
-        interval_minutes = int(max((session_df.index[1] - session_df.index[0]).total_seconds() // 60, 1))
+        interval_minutes = int(
+            max((session_df.index[1] - session_df.index[0]).total_seconds() // 60, 1))
     else:
         interval_minutes = 5
 
@@ -1664,12 +1699,17 @@ def _compute_opening_range_stats(intraday_df: pd.DataFrame, opening_range_mins: 
     if opening_slice.empty:
         return {}
 
-    or_high = float(opening_slice["High"].max()) if "High" in opening_slice else 0.0
-    or_low = float(opening_slice["Low"].min()) if "Low" in opening_slice else 0.0
-    current_close = float(session_df["Close"].iloc[-1]) if "Close" in session_df else 0.0
+    or_high = float(opening_slice["High"].max()
+                    ) if "High" in opening_slice else 0.0
+    or_low = float(opening_slice["Low"].min()
+                   ) if "Low" in opening_slice else 0.0
+    current_close = float(
+        session_df["Close"].iloc[-1]) if "Close" in session_df else 0.0
 
-    broke_above = bool((session_df.get("High", pd.Series(dtype=float)) > or_high).any())
-    broke_below = bool((session_df.get("Low", pd.Series(dtype=float)) < or_low).any())
+    broke_above = bool(
+        (session_df.get("High", pd.Series(dtype=float)) > or_high).any())
+    broke_below = bool(
+        (session_df.get("Low", pd.Series(dtype=float)) < or_low).any())
     failed_above = broke_above and (current_close < or_high)
     failed_below = broke_below and (current_close > or_low)
 
@@ -1708,7 +1748,7 @@ def _compute_intraday_pivot_reactions(intraday_df: pd.DataFrame) -> tuple[pd.Dat
         return pd.DataFrame(), {}
 
     prev_day = daily_df.iloc[-2]
-    prev_ohlc = pd.DataFrame([prev_day])[ ["High", "Low", "Close"] ]
+    prev_ohlc = pd.DataFrame([prev_day])[["High", "Low", "Close"]]
     pivot_df = _calculate_next_session_pivots(prev_ohlc)
     if pivot_df.empty:
         return pd.DataFrame(), {}
@@ -1724,15 +1764,20 @@ def _compute_intraday_pivot_reactions(intraday_df: pd.DataFrame) -> tuple[pd.Dat
     for row in pivot_df.itertuples(index=False):
         level_name = str(row.Level)
         level_value = float(row.Price)
-        touches = int(((session_df["Low"] <= level_value + tolerance) & (session_df["High"] >= level_value - tolerance)).sum())
-        touch_rows.append({"Level": level_name, "Price": level_value, "Touches": touches})
+        touches = int(((session_df["Low"] <= level_value + tolerance)
+                      & (session_df["High"] >= level_value - tolerance)).sum())
+        touch_rows.append(
+            {"Level": level_name, "Price": level_value, "Touches": touches})
 
     touch_df = pd.DataFrame(touch_rows)
-    level_map = {str(row.Level): float(row.Price) for row in pivot_df.itertuples(index=False)}
+    level_map = {str(row.Level): float(row.Price)
+                 for row in pivot_df.itertuples(index=False)}
     r1 = level_map.get("R1")
     s1 = level_map.get("S1")
-    failed_r1_breaks = int(((session_df["High"] > r1) & (session_df["Close"] < r1)).sum()) if r1 is not None else 0
-    failed_s1_breaks = int(((session_df["Low"] < s1) & (session_df["Close"] > s1)).sum()) if s1 is not None else 0
+    failed_r1_breaks = int(((session_df["High"] > r1) & (
+        session_df["Close"] < r1)).sum()) if r1 is not None else 0
+    failed_s1_breaks = int(((session_df["Low"] < s1) & (
+        session_df["Close"] > s1)).sum()) if s1 is not None else 0
 
     stats = {
         "failed_r1_breaks": float(failed_r1_breaks),
@@ -1762,9 +1807,12 @@ def _build_preopen_gap_playbook(ticker: str, intraday_df: pd.DataFrame) -> dict[
 
     gap_pct = ((first_open - prev_close) / prev_close) * 100.0
     opening_slice = session_df.head(min(3, len(session_df.index)))
-    auction_return = ((_safe_float(opening_slice.iloc[-1].get("Close"), first_open) - first_open) / first_open) * 100.0
-    first_volume = float(opening_slice.get("Volume", pd.Series(dtype=float)).sum()) if "Volume" in opening_slice else 0.0
-    median_volume = float(intraday_df.get("Volume", pd.Series(dtype=float)).median()) if "Volume" in intraday_df else 0.0
+    auction_return = ((_safe_float(
+        opening_slice.iloc[-1].get("Close"), first_open) - first_open) / first_open) * 100.0
+    first_volume = float(opening_slice.get("Volume", pd.Series(
+        dtype=float)).sum()) if "Volume" in opening_slice else 0.0
+    median_volume = float(intraday_df.get("Volume", pd.Series(
+        dtype=float)).median()) if "Volume" in intraday_df else 0.0
     volume_ratio = (first_volume / median_volume) if median_volume > 0 else 1.0
 
     if gap_pct >= 0.7 and auction_return > 0:
@@ -1778,7 +1826,8 @@ def _build_preopen_gap_playbook(ticker: str, intraday_df: pd.DataFrame) -> dict[
     else:
         setup = "Neutral open; wait for opening range break"
 
-    auction_signal = "Strong" if abs(auction_return) >= 0.25 and volume_ratio >= 3.0 else "Moderate" if abs(auction_return) >= 0.12 else "Weak"
+    auction_signal = "Strong" if abs(auction_return) >= 0.25 and volume_ratio >= 3.0 else "Moderate" if abs(
+        auction_return) >= 0.12 else "Weak"
     return {
         "prev_close": prev_close,
         "session_open": first_open,
@@ -1834,7 +1883,8 @@ def build_portfolio_from_verdict(
         return {}
 
     base_df["sector"] = base_df["ticker"].map(NIFTY_SECTOR_MAP).fillna("Other")
-    returns_df, corr_df = _build_portfolio_correlations(tuple(base_df["ticker"].tolist()), lookback_days, finalized_only)
+    returns_df, corr_df = _build_portfolio_correlations(
+        tuple(base_df["ticker"].tolist()), lookback_days, finalized_only)
 
     raw_scores: list[float] = []
     avg_corr_list: list[float] = []
@@ -1847,19 +1897,22 @@ def build_portfolio_from_verdict(
             avg_corr = 0.0
         avg_corr_list.append(avg_corr)
 
-        quality = abs(float(getattr(row, "score", 0.0))) * max(float(getattr(row, "rr_ratio", 1.0)), 1.0)
+        quality = abs(float(getattr(row, "score", 0.0))) * \
+            max(float(getattr(row, "rr_ratio", 1.0)), 1.0)
         diversifier = 1.0 / (1.0 + max(avg_corr, 0.0))
         raw_scores.append(max(quality * diversifier, 0.01))
 
     raw_total = sum(raw_scores)
-    prelim_weights = [score / raw_total for score in raw_scores] if raw_total > 0 else [1.0 / len(raw_scores)] * len(raw_scores)
+    prelim_weights = [score / raw_total for score in raw_scores] if raw_total > 0 else [
+        1.0 / len(raw_scores)] * len(raw_scores)
 
     sector_cap = max_sector_exposure_pct / 100.0
     sector_used: dict[str, float] = {}
     weights = [0.0] * len(prelim_weights)
     remaining_total = 1.0
 
-    ordering = sorted(range(len(prelim_weights)), key=lambda idx: prelim_weights[idx], reverse=True)
+    ordering = sorted(range(len(prelim_weights)),
+                      key=lambda idx: prelim_weights[idx], reverse=True)
     for idx in ordering:
         sector = str(base_df.at[idx, "sector"])
         used = sector_used.get(sector, 0.0)
@@ -1870,7 +1923,8 @@ def build_portfolio_from_verdict(
         remaining_total -= weights[idx]
 
     if remaining_total > 1e-6:
-        eligible = [idx for idx in ordering if weights[idx] < prelim_weights[idx]]
+        eligible = [idx for idx in ordering if weights[idx]
+                    < prelim_weights[idx]]
         for idx in eligible:
             sector = str(base_df.at[idx, "sector"])
             headroom = max(sector_cap - sector_used.get(sector, 0.0), 0.0)
@@ -1925,7 +1979,9 @@ def build_portfolio_from_verdict(
         for row in base_df.itertuples(index=False):
             ticker = str(row.ticker)
             if ticker in signed_returns.columns:
-                weighted = weighted + (float(row.alloc_weight) * signed_returns[ticker].fillna(0.0))
+                weighted = weighted + \
+                    (float(row.alloc_weight) *
+                     signed_returns[ticker].fillna(0.0))
         weighted = weighted.dropna()
     else:
         weighted = pd.Series(dtype=float)
@@ -1941,10 +1997,12 @@ def build_portfolio_from_verdict(
         cvar_95 = abs(float(tail.mean())) * 100.0 if not tail.empty else var_95
         equity = (1.0 + weighted).cumprod()
         drawdown = (equity / equity.cummax()) - 1.0
-        max_drawdown_pct = abs(float(drawdown.min())) * 100.0 if not drawdown.empty else 0.0
+        max_drawdown_pct = abs(float(drawdown.min())) * \
+            100.0 if not drawdown.empty else 0.0
 
     guardrail_breached = max_drawdown_pct > drawdown_guardrail_pct
-    de_risk_factor = min(drawdown_guardrail_pct / max_drawdown_pct, 1.0) if max_drawdown_pct > 0 else 1.0
+    de_risk_factor = min(drawdown_guardrail_pct /
+                         max_drawdown_pct, 1.0) if max_drawdown_pct > 0 else 1.0
 
     sector_df = (
         base_df.groupby("sector", as_index=False)["alloc_weight"]
@@ -2133,6 +2191,170 @@ def apply_position_sizing(
     return out_df
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def build_intraday_swing_suggestions(
+    days: int,
+    finalized_only: bool,
+    capital_inr: float = 50000.0,
+    max_positions: int = 6,
+    hold_min_days: int = 3,
+    hold_max_days: int = 7,
+) -> pd.DataFrame:
+    """Generate compact buy/sell swing suggestions for NIFTY 50 names.
+
+    Signals are derived from the latest refreshed EOD data and are intended for
+    short swing windows (next few sessions).
+    """
+    candidates: list[dict[str, object]] = []
+
+    for company, ticker in NIFTY_50_STOCKS.items():
+        eod_df = fetch_eod_data(ticker, days=max(days, 90))
+        if eod_df.empty or len(eod_df.index) < 55:
+            continue
+
+        if finalized_only and "IS_PROVISIONAL" in eod_df.columns:
+            finalized_df = eod_df[~eod_df["IS_PROVISIONAL"]].copy()
+            if not finalized_df.empty:
+                eod_df = finalized_df
+
+        if len(eod_df.index) < 30:
+            continue
+
+        latest = eod_df.iloc[-1]
+        close_value = _safe_float(latest.get("Close"), 0.0)
+        sma_20 = _safe_float(latest.get("SMA_20"), close_value)
+        sma_50 = _safe_float(latest.get("SMA_50"), close_value)
+        rsi_14 = _safe_float(latest.get("RSI_14"), 50.0)
+        macd = _safe_float(latest.get("MACD"), 0.0)
+        macd_signal = _safe_float(latest.get("MACD_SIGNAL"), 0.0)
+        macd_spread = macd - macd_signal
+        atr_14 = _compute_atr(eod_df, period=14)
+
+        if close_value <= 0 or atr_14 <= 0:
+            continue
+
+        momentum_3d = float(eod_df["Close"].pct_change(3).iloc[-1] * 100.0)
+
+        bull_score = 0.0
+        bear_score = 0.0
+
+        bull_score += 1.2 if close_value > sma_20 else 0.0
+        bull_score += 1.0 if sma_20 > sma_50 else 0.0
+        bull_score += 1.0 if macd_spread > 0 else 0.0
+        bull_score += 0.8 if 45 <= rsi_14 <= 68 else 0.0
+        bull_score += 0.7 if momentum_3d > 0 else 0.0
+
+        bear_score += 1.2 if close_value < sma_20 else 0.0
+        bear_score += 1.0 if sma_20 < sma_50 else 0.0
+        bear_score += 1.0 if macd_spread < 0 else 0.0
+        bear_score += 0.8 if 32 <= rsi_14 <= 55 else 0.0
+        bear_score += 0.7 if momentum_3d < 0 else 0.0
+
+        strength = max(bull_score, bear_score)
+        if strength < 2.5:
+            continue
+
+        signal = "BUY" if bull_score >= bear_score else "SELL"
+        entry = close_value
+
+        if signal == "BUY":
+            stop_loss = entry - (1.1 * atr_14)
+            target_exit = entry + (1.8 * atr_14)
+            setup_note = "Trend follow long with volatility-based stop"
+        else:
+            stop_loss = entry + (1.1 * atr_14)
+            target_exit = entry - (1.8 * atr_14)
+            setup_note = "Trend follow short with volatility-based stop"
+
+        risk = abs(entry - stop_loss)
+        reward = abs(target_exit - entry)
+        rr_ratio = reward / risk if risk > 0 else 0.0
+
+        atr_pct = (atr_14 / entry) * 100.0
+        hold_days = 3 if atr_pct >= 2.3 else 4 if atr_pct >= 1.6 else 5
+        hold_days = int(max(hold_min_days, min(hold_max_days, hold_days)))
+
+        conviction = strength + min(abs(momentum_3d) / 2.0, 1.2)
+
+        candidates.append(
+            {
+                "company": company,
+                "ticker": ticker,
+                "signal": signal,
+                "entry": round(entry, 2),
+                "stop_loss": round(stop_loss, 2),
+                "target_exit": round(target_exit, 2),
+                "risk_reward": round(rr_ratio, 2),
+                "holding_days": hold_days,
+                "conviction": round(conviction, 2),
+                "rsi_14": round(rsi_14, 2),
+                "macd_spread": round(macd_spread, 3),
+                "momentum_3d_pct": round(momentum_3d, 2),
+                "atr_14": round(atr_14, 2),
+                "setup_note": setup_note,
+                "exit_rule": "Exit on target, stop-loss, or end of holding window",
+            }
+        )
+
+    if not candidates:
+        return pd.DataFrame()
+
+    suggestions_df = pd.DataFrame(candidates).sort_values(
+        ["conviction", "risk_reward"], ascending=[False, False]
+    )
+
+    side_slots = max(1, max_positions // 2)
+    top_buy = suggestions_df[suggestions_df["signal"]
+                             == "BUY"].head(side_slots)
+    top_sell = suggestions_df[suggestions_df["signal"]
+                              == "SELL"].head(side_slots)
+    selected = pd.concat([top_buy, top_sell], ignore_index=True)
+
+    if len(selected.index) < max_positions:
+        remaining = suggestions_df[~suggestions_df["ticker"].isin(
+            selected["ticker"])]
+        selected = pd.concat(
+            [selected, remaining.head(max_positions - len(selected.index))],
+            ignore_index=True,
+        )
+
+    selected = selected.head(max_positions).copy()
+    per_trade_capital = float(capital_inr) / max(len(selected.index), 1)
+
+    quantities = []
+    capital_used = []
+    expected_profit = []
+    expected_loss = []
+
+    for row in selected.itertuples(index=False):
+        entry = float(row.entry)
+        qty = max(int(math.floor(per_trade_capital / entry)), 0)
+        trade_capital = qty * entry
+
+        if str(row.signal) == "BUY":
+            target_pnl = qty * max(float(row.target_exit) - entry, 0.0)
+            stop_pnl = qty * max(entry - float(row.stop_loss), 0.0)
+        else:
+            target_pnl = qty * max(entry - float(row.target_exit), 0.0)
+            stop_pnl = qty * max(float(row.stop_loss) - entry, 0.0)
+
+        quantities.append(qty)
+        capital_used.append(round(trade_capital, 2))
+        expected_profit.append(round(target_pnl, 2))
+        expected_loss.append(round(stop_pnl, 2))
+
+    selected["qty"] = quantities
+    selected["capital_used"] = capital_used
+    selected["expected_profit_target"] = expected_profit
+    selected["expected_loss_stop"] = expected_loss
+    selected["holding_window"] = selected["holding_days"].apply(
+        lambda d: f"{max(1, int(d) - 1)}-{int(d)} sessions"
+    )
+
+    selected = selected[selected["qty"] > 0].copy()
+    return selected.reset_index(drop=True)
+
+
 def log_verdict_run(
     verdict_df: pd.DataFrame,
     policy_name: str,
@@ -2202,27 +2424,24 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
 
-    signal_tab, pulse_tab, verdict_tab, portfolio_tab, intraday_tab, backtest_tab, nifty_analysis_tab, derivatives_quant_tab = st.tabs(
+    dashboard_tab, trading_tab, analytics_tab, backtest_tab = st.tabs(
         [
-            "Signal Dashboard",
-            "NIFTY 50 Pulse",
-            "Verdict",
-            "Portfolio Lab",
-            "Intraday Intelligence",
-            "Backtest",
-            "NIFTY 50 Analysis",
-            "Derivatives + Quant Lab",
+            "📊 Dashboard",
+            "🎯 Trading Setup",
+            "📈 Deep Analytics",
+            "📉 Backtest & Performance",
         ]
     )
 
-    with signal_tab:
+    with dashboard_tab:
+        st.markdown("### Market Overview")
+
+        # Fetch data for selected ticker
         eod_df = get_eod_cached(selected_ticker, days=days)
         if eod_df.empty:
-            st.error("No EOD data available for selected ticker.")
             fallback_ticker = "RELIANCE.NS"
             eod_df = get_eod_cached(fallback_ticker, days=days)
             if eod_df.empty:
-                st.warning("Fallback data is also unavailable. Signal tab is limited right now, but other tabs continue to work.")
                 eod_df = pd.DataFrame(
                     {
                         "Open": [0.0],
@@ -2248,9 +2467,6 @@ def main() -> None:
             finalized_df = eod_df[~eod_df["IS_PROVISIONAL"]].copy()
             if not finalized_df.empty:
                 eod_df = finalized_df
-            else:
-                st.warning(
-                    "No finalized rows are available yet for this symbol, so the latest available data is shown instead.")
 
         latest = eod_df.iloc[-1]
         close_value = _safe_float(latest.get("Close"), 0.0)
@@ -2270,344 +2486,214 @@ def main() -> None:
         is_provisional = bool(latest.get("IS_PROVISIONAL", False))
         bar_status = "Provisional" if is_provisional else "Final"
 
+        # Compact metric layout
         metric_cols = st.columns(6)
         metric_cols[0].metric("Close", f"{close_value:.2f}")
         metric_cols[1].metric("1D Move", f"{day_change_pct:.2f}%")
         metric_cols[2].metric("RSI (14)", f"{rsi_value:.2f}")
         metric_cols[3].metric(
             "MACD Spread", f"{(macd_value - macd_signal_value):.3f}")
-        metric_cols[4].metric("Data Lag", f"{staleness_days} day(s)")
+        metric_cols[4].metric("Data Lag", f"{staleness_days}d")
         metric_cols[5].metric("Bar Status", bar_status)
 
-        st.caption(f"Data source: {latest_source}")
+        if staleness_days > 1 or is_provisional:
+            st.caption(
+                "⚠️ Data may be stale or provisional. Use refresh button if needed.")
 
-        if staleness_days > 1:
-            st.warning(
-                "Latest close appears stale. Use the refresh button or check if market was closed.")
-        if is_provisional:
-            st.warning(
-                "Latest row is provisional (quote-patched) and may be revised when official EOD settles.")
+        # Two-column dashboard layout
+        left_col, right_col = st.columns([2, 1.5])
 
-        chart_series_options = ["Close", "SMA_20", "EMA_20", "SMA_50"]
-        selected_chart_series = st.multiselect(
-            "Visible chart series",
-            options=chart_series_options,
-            default=chart_series_options,
-            help="Toggle individual lines on the price chart.",
-        )
-        _render_price_structure_chart(
-            eod_df,
-            selected_name,
-            selected_ticker,
-            selected_chart_series,
-        )
+        with left_col:
+            st.subheader(f"📊 {selected_name} Technical")
+            chart_series_options = ["Close", "SMA_20", "EMA_20", "SMA_50"]
+            selected_chart_series = st.multiselect(
+                "Chart series", options=chart_series_options,
+                default=chart_series_options, label_visibility="collapsed"
+            )
+            if selected_chart_series:
+                _render_price_structure_chart(
+                    eod_df, selected_name, selected_ticker, selected_chart_series)
 
-        vcol1, vcol2 = st.columns([2, 1])
-        with vcol1:
-            st.subheader("Daily Volume")
-            if "Volume" in eod_df.columns:
-                st.bar_chart(eod_df["Volume"], use_container_width=True)
+            # Compact news/sentiment section
+            news_df = get_news_cached(
+                selected_ticker, max_items=5, use_live_news=use_live_news)
+            source = "RSS" if (not news_df.empty and str(
+                news_df.iloc[0]["news_source"]) == "rss") else "Fallback"
+            st.markdown(f"**News ({source})**")
+            if not news_df.empty:
+                for _, row in news_df.head(3).iterrows():
+                    st.caption(
+                        f"• {row.get('headline', '')} *({row.get('sentiment_label', '')})*")
             else:
-                st.info("Volume data not available.")
-        with vcol2:
-            st.subheader("Volatility Snapshot")
-            st.metric("20D Std Dev (%)", f"{volatility_20:.2f}")
-            st.metric(
-                "20D SMA", f"{_safe_float(latest.get('SMA_20'), 0.0):.2f}")
-            st.metric(
-                "50D SMA", f"{_safe_float(latest.get('SMA_50'), 0.0):.2f}")
+                st.caption("No headlines available")
 
-        support_df, resistance_df = _calculate_support_resistance_levels(
-            eod_df,
-            close_value,
-            lookback_days=min(len(eod_df), 120),
-            pivot_window=3,
-            max_levels=3,
-        )
+        with right_col:
+            st.subheader("⚡ Signal & Levels")
 
-        st.subheader("Support & Resistance Map")
-        st.caption(
-            "Derived from recent swing highs/lows, grouped into ATR-aware price bands, then ranked by touches and recency."
-        )
+            # Recommendation
+            avg_sentiment = float(
+                news_df["sentiment_score"].mean()) if not news_df.empty else 0.0
+            recommendation, combined_score, technical_score, _ = generate_recommendation(
+                rsi_value, macd_value, macd_signal_value, close_value, sma_20_value, avg_sentiment
+            )
+            confidence = derive_confidence_band(combined_score, len(news_df))
+            strength = min(max((abs(combined_score) / 1.0), 0.0), 1.0)
 
-        if support_df.empty and resistance_df.empty:
-            st.info("Not enough repeated swing points yet to estimate stable support and resistance levels.")
-        else:
-            summary_cols = st.columns(4)
+            color = "🟢" if recommendation == "BUY" else "🔴" if recommendation == "SELL" else "🟡"
+            st.metric(f"{color} Signal", recommendation,
+                      f"{combined_score:+.3f}")
+            st.metric("Confidence", confidence)
+            st.progress(strength)
+
+            # Support/Resistance
+            support_df, resistance_df = _calculate_support_resistance_levels(
+                eod_df, close_value, lookback_days=min(len(eod_df), 120)
+            )
             top_support = support_df.iloc[0] if not support_df.empty else None
             top_resistance = resistance_df.iloc[0] if not resistance_df.empty else None
 
-            summary_cols[0].metric(
-                "Nearest Support",
-                f"{float(top_support['Level']):.2f}" if top_support is not None else "N/A",
-                f"{float(top_support['Distance to Close (%)']):.2f}% below" if top_support is not None else "",
-            )
-            summary_cols[1].metric(
-                "Support Strength",
-                f"{float(top_support['Strength']):.2f}" if top_support is not None else "N/A",
-                f"{int(top_support['Touches'])} touch(es)" if top_support is not None else "",
-            )
-            summary_cols[2].metric(
-                "Nearest Resistance",
-                f"{float(top_resistance['Level']):.2f}" if top_resistance is not None else "N/A",
-                f"{float(top_resistance['Distance to Close (%)']):.2f}% above" if top_resistance is not None else "",
-            )
-            summary_cols[3].metric(
-                "Resistance Strength",
-                f"{float(top_resistance['Strength']):.2f}" if top_resistance is not None else "N/A",
-                f"{int(top_resistance['Touches'])} touch(es)" if top_resistance is not None else "",
-            )
+            if top_support is not None:
+                st.caption(f"📉 S: {float(top_support['Level']):.2f}")
+            if top_resistance is not None:
+                st.caption(f"📈 R: {float(top_resistance['Level']):.2f}")
 
-            level_frames = []
-            if not support_df.empty:
-                level_frames.append(support_df)
-            if not resistance_df.empty:
-                level_frames.append(resistance_df)
-
-            if level_frames:
-                levels_df = pd.concat(level_frames, ignore_index=True)
-                levels_df = levels_df.sort_values(
-                    ["Level Type", "Distance to Close (%)"],
-                    ascending=[True, True],
+            if st.button("📌 Log Signal", use_container_width=True):
+                log_recommendation_snapshot(
+                    ticker=selected_ticker, company_name=selected_name,
+                    recommendation=recommendation, confidence_band=confidence,
+                    combined_score=combined_score, technical_score=technical_score,
+                    sentiment_score=avg_sentiment, rsi_value=rsi_value,
+                    macd_value=macd_value, macd_signal_value=macd_signal_value,
+                    headline_count=len(news_df), news_source=source
                 )
-                st.dataframe(
-                    levels_df.style.format(
-                        {
-                            "Level": "{:.2f}",
-                            "Distance to Close (%)": "{:.2f}",
-                            "Strength": "{:.2f}",
-                        }
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                st.success("Signal logged!")
 
-            with st.expander("How the levels are derived"):
-                st.markdown(
-                    """
-                    The dashboard uses a recent lookback window of daily OHLC bars, finds swing highs and lows with a centered pivot filter, clusters nearby prices using an ATR-aware tolerance band, and then ranks each cluster by the number of touches and how recently it was respected.
-                    """
-                )
+        # NIFTY 50 Pulse - Compact view
+        st.markdown("---")
+        st.subheader("📊 NIFTY 50 Pulse")
+        pulse_col1, pulse_col2 = st.columns([1, 4])
 
-        indicator_df = (
-            latest[["Close", "RSI_14", "MACD", "MACD_SIGNAL",
-                    "MACD_HIST", "SMA_20", "SMA_50", "EMA_20"]]
-            .rename(
-                {
-                    "Close": "Close",
-                    "RSI_14": "RSI (14)",
-                    "MACD": "MACD",
-                    "MACD_SIGNAL": "MACD Signal",
-                    "MACD_HIST": "MACD Histogram",
-                    "SMA_20": "SMA (20)",
-                    "SMA_50": "SMA (50)",
-                    "EMA_20": "EMA (20)",
-                }
-            )
-            .to_frame("Value")
-        )
-        st.subheader("Latest Technical Snapshot")
-        st.dataframe(indicator_df.style.format(
-            {"Value": "{:.3f}"}), use_container_width=True)
-
-        news_df = get_news_cached(
-            selected_ticker, max_items=news_items, use_live_news=use_live_news)
-        source = "RSS" if (not news_df.empty and str(
-            news_df.iloc[0]["news_source"]) == "rss") else "Mock Fallback"
-        st.subheader(f"News Sentiment ({source})")
-        st.dataframe(news_df[["headline", "sentiment_score",
-                     "sentiment_label"]], use_container_width=True)
-
-        avg_sentiment = float(
-            news_df["sentiment_score"].mean()) if not news_df.empty else 0.0
-        recommendation, combined_score, technical_score, sentiment_score = generate_recommendation(
-            rsi_value=rsi_value,
-            macd_value=macd_value,
-            macd_signal_value=macd_signal_value,
-            close_value=close_value,
-            sma_20_value=sma_20_value,
-            avg_news_sentiment=avg_sentiment,
-        )
-
-        headline_count = int(len(news_df.index))
-        confidence_band = derive_confidence_band(
-            combined_score, headline_count)
-        strength = min(max((abs(combined_score) / 1.0), 0.0), 1.0)
-
-        st.subheader("Recommendation Box")
-        st.info(
-            (
-                f"Recommendation: {recommendation}\n"
-                f"Confidence: {confidence_band} | Signal strength: {strength * 100:.1f}%\n"
-                f"Score blend: {combined_score:.3f} = 65% technical + 35% sentiment\n"
-                f"Technical score: {technical_score:.3f} | Sentiment score: {sentiment_score:.3f}\n"
-                f"Rule thresholds: BUY >= 0.25, SELL <= -0.25, else HOLD."
-            )
-        )
-        st.progress(strength, text="Signal strength")
-
-        if st.button("Log Recommendation Snapshot", use_container_width=False):
-            log_path = log_recommendation_snapshot(
-                ticker=selected_ticker,
-                company_name=selected_name,
-                recommendation=recommendation,
-                confidence_band=confidence_band,
-                combined_score=combined_score,
-                technical_score=technical_score,
-                sentiment_score=sentiment_score,
-                rsi_value=rsi_value,
-                macd_value=macd_value,
-                macd_signal_value=macd_signal_value,
-                headline_count=headline_count,
-                news_source=source,
-            )
-            st.success(f"Saved snapshot to {log_path}")
-
-    with pulse_tab:
-        st.subheader("NIFTY 50 Pulse Scanner")
-        st.caption(
-            "Runs a cross-sectional technical scan on all configured NIFTY 50 stocks.")
-
-        if st.button("Run NIFTY 50 scan", use_container_width=False):
-            with st.spinner("Scanning NIFTY 50 components..."):
-                pulse_df = build_nifty50_pulse(
+        with pulse_col1:
+            if st.button("🔄 Scan", use_container_width=True):
+                st.session_state["pulse_data"] = build_nifty50_pulse(
                     days=days, finalized_only=finalized_only)
 
-            if pulse_df.empty:
-                st.warning("Pulse scanner could not fetch enough data.")
-            else:
-                top_buys = pulse_df[pulse_df["recommendation"] == "BUY"].head(
-                    10)
-                top_sells = pulse_df[pulse_df["recommendation"] == "SELL"].head(
-                    10)
+        with pulse_col2:
+            st.caption("Cross-sectional scan of top movers")
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Stocks scanned", f"{len(pulse_df.index)}")
-                c2.metric(
-                    "BUY signals", f"{int((pulse_df['recommendation'] == 'BUY').sum())}")
-                c3.metric(
-                    "SELL signals", f"{int((pulse_df['recommendation'] == 'SELL').sum())}")
+        pulse_data = st.session_state.get("pulse_data")
+        if isinstance(pulse_data, pd.DataFrame) and not pulse_data.empty:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Scanned", f"{len(pulse_data)}")
+            c2.metric(
+                "BUY", f"{int((pulse_data['recommendation'] == 'BUY').sum())}")
+            c3.metric(
+                "SELL", f"{int((pulse_data['recommendation'] == 'SELL').sum())}")
 
-                st.markdown("### Top BUY Candidates")
-                st.dataframe(top_buys, use_container_width=True)
-
-                st.markdown("### Top SELL Pressure")
-                st.dataframe(top_sells, use_container_width=True)
-
-                st.markdown("### Full NIFTY 50 Pulse")
-                st.dataframe(pulse_df, use_container_width=True)
+            with st.expander("View Pulse Results", expanded=False):
+                top_buys = pulse_data[pulse_data["recommendation"] == "BUY"].head(
+                    5)
+                top_sells = pulse_data[pulse_data["recommendation"] == "SELL"].head(
+                    5)
+                t1, t2 = st.columns(2)
+                with t1:
+                    st.markdown("**Top BUY**")
+                    st.dataframe(top_buys[[
+                                 "company", "combined_score", "day_change_pct"]], use_container_width=True, hide_index=True)
+                with t2:
+                    st.markdown("**Top SELL**")
+                    st.dataframe(top_sells[[
+                                 "company", "combined_score", "day_change_pct"]], use_container_width=True, hide_index=True)
+                st.markdown("**Full Pulse**")
+                st.dataframe(pulse_data, use_container_width=True,
+                             hide_index=True)
         else:
-            st.info("Click 'Run NIFTY 50 scan' to generate cross-stock signals.")
+            st.caption("Click 'Scan' to run NIFTY 50 cross-sectional analysis")
 
-    with verdict_tab:
-        st.subheader("Verdict: Next Session Top 3 Trades")
-        st.caption(
-            "Engine ranks NIFTY 50 stocks using RSI, MACD spread, trend regime, momentum, and ATR-based risk setup.")
+    with trading_tab:
+        st.markdown("### Trade Planning & Execution")
 
-        controls = st.columns(3)
-        verdict_policy = controls[0].selectbox(
-            "Policy", list(VERDICT_POLICIES.keys()), index=1)
-        account_capital = controls[1].number_input(
-            "Account Capital", min_value=50000.0, value=500000.0, step=10000.0
-        )
-        risk_per_trade_pct = controls[2].slider(
-            "Risk per Trade (%)", min_value=0.25, max_value=3.00, value=1.00, step=0.25
-        )
+        # Create subtabs for trading workflows
+        setup_sub, portfolio_sub, intraday_sub, intraday_suggestions_sub = st.tabs(
+            ["Verdict Engine", "Portfolio Lab", "Intraday", "Intraday Suggestions"])
 
-        if st.button("Generate Verdict", use_container_width=False):
-            with st.spinner("Calculating ranked trade setups..."):
-                verdict_df = build_verdict_candidates(
-                    days=days,
-                    finalized_only=finalized_only,
-                    policy_name=verdict_policy,
-                )
+        with setup_sub:
+            st.subheader("Verdict: Next Session Setup")
+            st.caption(
+                "Rank NIFTY 50 stocks; generate entry/target/stop with position sizing")
 
-            verdict_df = apply_position_sizing(
-                verdict_df=verdict_df,
-                account_capital=float(account_capital),
-                risk_per_trade_pct=float(risk_per_trade_pct),
-                max_trades=3,
-            )
-            st.session_state["current_verdict_df"] = verdict_df
+            controls = st.columns(3)
+            verdict_policy = controls[0].selectbox(
+                "Policy", list(VERDICT_POLICIES.keys()), index=1)
+            account_capital = controls[1].number_input(
+                "Capital", min_value=50000.0, value=500000.0, step=10000.0)
+            risk_per_trade_pct = controls[2].slider(
+                "Risk (%)", min_value=0.25, max_value=3.00, value=1.00, step=0.25)
 
-            if verdict_df.empty:
-                st.warning(
-                    "No high-conviction setups found for current settings.")
-            else:
-                total_capital_used = float(verdict_df["capital_used"].sum())
-                total_expected_profit = float(
-                    verdict_df["expected_profit_at_target"].sum())
-                total_expected_loss = float(
-                    verdict_df["expected_loss_at_stop"].sum())
-                weighted_rr = (
-                    total_expected_profit / total_expected_loss
-                    if total_expected_loss > 0
-                    else 0.0
-                )
+            if st.button("Generate Verdict", use_container_width=False):
+                with st.spinner("Calculating..."):
+                    verdict_df = build_verdict_candidates(
+                        days=days, finalized_only=finalized_only, policy_name=verdict_policy)
+                    verdict_df = apply_position_sizing(verdict_df, float(
+                        account_capital), float(risk_per_trade_pct), max_trades=3)
+                    st.session_state["current_verdict_df"] = verdict_df
 
-                summary_cols = st.columns(4)
-                summary_cols[0].metric(
-                    "Total Capital Used", f"{total_capital_used:.2f}")
-                summary_cols[1].metric(
-                    "Portfolio Loss @ Stops", f"{total_expected_loss:.2f}")
-                summary_cols[2].metric(
-                    "Portfolio Profit @ Targets", f"{total_expected_profit:.2f}")
-                summary_cols[3].metric("Portfolio R:R", f"{weighted_rr:.2f}")
+            verdict_df = st.session_state.get("current_verdict_df")
+            if isinstance(verdict_df, pd.DataFrame) and not verdict_df.empty:
+                st.markdown("#### Summary")
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("Capital Used",
+                          f"{verdict_df['capital_used'].sum():.0f}")
+                s2.metric("Loss @ Stops",
+                          f"{verdict_df['expected_loss_at_stop'].sum():.0f}")
+                s3.metric("Profit @ Target",
+                          f"{verdict_df['expected_profit_at_target'].sum():.0f}")
+                s4.metric(
+                    "Portfolio R:R", f"{(verdict_df['expected_profit_at_target'].sum() / max(verdict_df['expected_loss_at_stop'].sum(), 1)):.2f}")
 
                 for idx, row in verdict_df.iterrows():
-                    st.markdown(
-                        (
-                            f"### {idx + 1}. {row['company']} ({row['ticker']}) - {row['side']}\n"
-                            f"Entry: {row['entry']:.2f} | Target: {row['target']:.2f} | Stop Loss: {row['stop_loss']:.2f}\n"
-                            f"Score: {row['score']:.3f} | R:R: {row['rr_ratio']:.2f} | "
-                            f"RSI: {row['rsi_14']:.2f} | MACD Spread: {row['macd_spread']:.3f}\n"
-                            f"Qty: {int(row['qty'])} | Capital Used: {row['capital_used']:.2f} | "
-                            f"Profit@Target: {row['expected_profit_at_target']:.2f} | Loss@Stop: {row['expected_loss_at_stop']:.2f}\n"
-                            f"Bar status: {row['bar_status']} | Source: {row['data_source']}"
-                        )
-                    )
+                    with st.expander(f"{row['company']} ({row['ticker']}) - {row['side']} @ {row['entry']:.2f}"):
+                        sc1, sc2, sc3 = st.columns(3)
+                        sc1.metric("Entry", f"{row['entry']:.2f}")
+                        sc2.metric("Target", f"{row['target']:.2f}")
+                        sc3.metric("Stop", f"{row['stop_loss']:.2f}")
+                        st.caption(
+                            f"Score: {row['score']:.3f} | R:R: {row['rr_ratio']:.2f} | Qty: {int(row['qty'])} | Status: {row['bar_status']}")
 
-                st.markdown("### Verdict Table")
-                st.dataframe(verdict_df, use_container_width=True)
+                st.download_button("📥 Download CSV", data=verdict_df.to_csv(index=False),
+                                   file_name=f"verdict_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")
+                if st.button("Log Verdict Run"):
+                    log_verdict_run(verdict_df, verdict_policy, float(
+                        account_capital), float(risk_per_trade_pct))
+                    st.success("Logged!")
+            else:
+                st.info("Click 'Generate Verdict' to produce top 3 setups")
 
-                csv_data = verdict_df.to_csv(index=False)
-                st.download_button(
-                    label="Download Verdict CSV",
-                    data=csv_data,
-                    file_name=f"verdict_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                )
+            cached_verdict = st.session_state.get("current_verdict_df")
+            if isinstance(cached_verdict, pd.DataFrame) and not cached_verdict.empty:
+                st.caption(
+                    "Last generated verdict is retained in session for quick export/logging.")
 
-                if st.button("Log Verdict Run", use_container_width=False):
-                    log_path = log_verdict_run(
-                        verdict_df=verdict_df,
-                        policy_name=verdict_policy,
-                        account_capital=float(account_capital),
-                        risk_per_trade_pct=float(risk_per_trade_pct),
-                    )
-                    st.success(f"Saved verdict run to {log_path}")
-        else:
-            st.info(
-                "Click 'Generate Verdict' to produce top 3 buy/sell setups for the next trading session.")
-
-        cached_verdict = st.session_state.get("current_verdict_df")
-        if isinstance(cached_verdict, pd.DataFrame) and not cached_verdict.empty:
-            st.caption(
-                "Last generated verdict is retained in session for quick export/logging.")
-
-    with portfolio_tab:
-        st.subheader("Portfolio Lab")
-        st.caption("Build multi-position portfolios from verdict candidates with correlation-aware sizing and risk guardrails.")
+        with portfolio_sub:
+            st.subheader("Portfolio Lab")
+        st.caption(
+            "Build multi-position portfolios from verdict candidates with correlation-aware sizing and risk guardrails.")
 
         pcol1, pcol2, pcol3 = st.columns(3)
-        portfolio_policy = pcol1.selectbox("Portfolio policy", list(VERDICT_POLICIES.keys()), index=1, key="portfolio_policy")
-        portfolio_capital = pcol2.number_input("Portfolio capital", min_value=50000.0, value=500000.0, step=10000.0, key="portfolio_capital")
-        portfolio_positions = int(pcol3.slider("Max positions", min_value=3, max_value=12, value=6, step=1, key="portfolio_positions"))
+        portfolio_policy = pcol1.selectbox("Portfolio policy", list(
+            VERDICT_POLICIES.keys()), index=1, key="portfolio_policy")
+        portfolio_capital = pcol2.number_input(
+            "Portfolio capital", min_value=50000.0, value=500000.0, step=10000.0, key="portfolio_capital")
+        portfolio_positions = int(pcol3.slider(
+            "Max positions", min_value=3, max_value=12, value=6, step=1, key="portfolio_positions"))
 
         pcol4, pcol5, pcol6 = st.columns(3)
-        sector_cap_pct = float(pcol4.slider("Max sector exposure (%)", min_value=20, max_value=70, value=35, step=5, key="portfolio_sector_cap"))
-        corr_lookback = int(pcol5.slider("Correlation lookback days", min_value=45, max_value=252, value=126, step=9, key="portfolio_corr_lookback"))
-        dd_guardrail = float(pcol6.slider("Drawdown guardrail (%)", min_value=4.0, max_value=20.0, value=10.0, step=0.5, key="portfolio_dd_guardrail"))
+        sector_cap_pct = float(pcol4.slider("Max sector exposure (%)", min_value=20,
+                               max_value=70, value=35, step=5, key="portfolio_sector_cap"))
+        corr_lookback = int(pcol5.slider("Correlation lookback days", min_value=45,
+                            max_value=252, value=126, step=9, key="portfolio_corr_lookback"))
+        dd_guardrail = float(pcol6.slider("Drawdown guardrail (%)", min_value=4.0,
+                             max_value=20.0, value=10.0, step=0.5, key="portfolio_dd_guardrail"))
 
         if st.button("Construct Portfolio", key="run_portfolio_lab"):
             with st.spinner("Constructing portfolio from verdict candidates..."):
@@ -2620,7 +2706,8 @@ def main() -> None:
                     verdict_df=verdict_pool,
                     account_capital=float(portfolio_capital),
                     risk_per_trade_pct=1.0,
-                    max_trades=max(portfolio_positions * 2, portfolio_positions),
+                    max_trades=max(portfolio_positions *
+                                   2, portfolio_positions),
                 )
 
                 portfolio_bundle = build_portfolio_from_verdict(
@@ -2642,19 +2729,26 @@ def main() -> None:
             corr_df = portfolio_bundle.get("corr_df", pd.DataFrame())
 
             metric_cols = st.columns(6)
-            metric_cols[0].metric("Positions", f"{int(summary.get('positions', 0))}")
-            metric_cols[1].metric("Capital Used", f"{float(summary.get('capital_used', 0.0)):.2f}")
-            metric_cols[2].metric("Portfolio R:R", f"{float(summary.get('portfolio_rr', 0.0)):.2f}")
-            metric_cols[3].metric("VaR 95%", f"{float(summary.get('var_95_pct', 0.0)):.2f}%")
-            metric_cols[4].metric("CVaR 95%", f"{float(summary.get('cvar_95_pct', 0.0)):.2f}%")
-            metric_cols[5].metric("Max Drawdown", f"{float(summary.get('max_drawdown_pct', 0.0)):.2f}%")
+            metric_cols[0].metric(
+                "Positions", f"{int(summary.get('positions', 0))}")
+            metric_cols[1].metric(
+                "Capital Used", f"{float(summary.get('capital_used', 0.0)):.2f}")
+            metric_cols[2].metric(
+                "Portfolio R:R", f"{float(summary.get('portfolio_rr', 0.0)):.2f}")
+            metric_cols[3].metric(
+                "VaR 95%", f"{float(summary.get('var_95_pct', 0.0)):.2f}%")
+            metric_cols[4].metric(
+                "CVaR 95%", f"{float(summary.get('cvar_95_pct', 0.0)):.2f}%")
+            metric_cols[5].metric(
+                "Max Drawdown", f"{float(summary.get('max_drawdown_pct', 0.0)):.2f}%")
 
             if bool(summary.get("guardrail_breached", False)):
                 st.warning(
                     f"Drawdown guardrail breached. Suggested de-risk factor: {float(summary.get('de_risk_factor', 1.0)):.2f}x"
                 )
             else:
-                st.success("Drawdown guardrail check passed for current portfolio mix.")
+                st.success(
+                    "Drawdown guardrail check passed for current portfolio mix.")
 
             if isinstance(portfolio_df, pd.DataFrame) and not portfolio_df.empty:
                 st.markdown("##### Portfolio Construction")
@@ -2675,7 +2769,8 @@ def main() -> None:
                     "expected_profit",
                     "expected_loss",
                 ]
-                available_cols = [col for col in view_cols if col in portfolio_df.columns]
+                available_cols = [
+                    col for col in view_cols if col in portfolio_df.columns]
                 st.dataframe(
                     portfolio_df[available_cols].style.format(
                         {
@@ -2700,7 +2795,8 @@ def main() -> None:
                 st.markdown("##### Sector Exposure")
                 if isinstance(sector_df, pd.DataFrame) and not sector_df.empty:
                     st.dataframe(
-                        sector_df[["sector", "weight_pct"]].style.format({"weight_pct": "{:.2f}%"}),
+                        sector_df[["sector", "weight_pct"]].style.format(
+                            {"weight_pct": "{:.2f}%"}),
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -2710,104 +2806,266 @@ def main() -> None:
             with s2:
                 st.markdown("##### Correlation Matrix")
                 if isinstance(corr_df, pd.DataFrame) and not corr_df.empty:
-                    st.dataframe(corr_df.style.format("{:.2f}"), use_container_width=True)
+                    st.dataframe(corr_df.style.format(
+                        "{:.2f}"), use_container_width=True)
                 else:
                     st.info("Correlation matrix not available for selected set.")
         else:
-            st.info("Click 'Construct Portfolio' to generate a correlation-aware multi-position allocation.")
+            st.info(
+                "Click 'Construct Portfolio' to generate a correlation-aware multi-position allocation.")
 
-    with intraday_tab:
-        st.subheader("Intraday Intelligence")
-        st.caption("5m/15m session analytics with opening range, gap playbook, pivots, and breakout failure stats.")
-
-        ic1, ic2, ic3 = st.columns(3)
-        intraday_name = ic1.selectbox("Intraday symbol", list(NIFTY_50_STOCKS.keys()), index=list(NIFTY_50_STOCKS.keys()).index(selected_name), key="intraday_symbol")
-        intraday_interval = ic2.selectbox("Timeframe", options=["5m", "15m"], index=0, key="intraday_interval")
-        intraday_period_days = int(ic3.slider("Intraday lookback (days)", min_value=1, max_value=10, value=5, step=1, key="intraday_days"))
-
-        opening_range_mins = int(
-            st.selectbox("Opening range window", options=[15, 30, 45, 60], index=1, key="intraday_or_window")
-        )
-
-        intraday_ticker = NIFTY_50_STOCKS[intraday_name]
-        with st.spinner("Fetching intraday bars..."):
-            intraday_df = fetch_intraday_data(intraday_ticker, interval=intraday_interval, period_days=intraday_period_days)
-
-        if intraday_df.empty:
-            st.warning("Intraday data unavailable for this ticker/timeframe right now.")
-        else:
-            or_stats = _compute_opening_range_stats(intraday_df, opening_range_mins)
-            touch_df, pivot_stats = _compute_intraday_pivot_reactions(intraday_df)
-            gap_playbook = _build_preopen_gap_playbook(intraday_ticker, intraday_df)
-
-            latest_price = float(intraday_df["Close"].iloc[-1]) if "Close" in intraday_df else 0.0
-            session_open = float(intraday_df[intraday_df.index.date == intraday_df.index[-1].date()]["Open"].iloc[0]) if "Open" in intraday_df else latest_price
-            intraday_move = ((latest_price - session_open) / session_open) * 100.0 if session_open > 0 else 0.0
-
-            mcols = st.columns(6)
-            mcols[0].metric("Live Price", f"{latest_price:.2f}")
-            mcols[1].metric("Session Move", f"{intraday_move:.2f}%")
-            mcols[2].metric("OR High", f"{float(or_stats.get('opening_high', 0.0)):.2f}")
-            mcols[3].metric("OR Low", f"{float(or_stats.get('opening_low', 0.0)):.2f}")
-            mcols[4].metric("Breakout Bias", str(or_stats.get("breakout_bias", "N/A")))
-            mcols[5].metric("Pivot Touches", f"{float(pivot_stats.get('pivot_touch_total', 0.0)):.0f}")
-
-            st.markdown("##### Pre-open Gap Playbook + Opening Auction Signal")
-            if gap_playbook:
-                g1, g2, g3, g4 = st.columns(4)
-                g1.metric("Gap %", f"{float(gap_playbook.get('gap_pct', 0.0)):.2f}%")
-                g2.metric("Auction Return", f"{float(gap_playbook.get('auction_return_pct', 0.0)):.2f}%")
-                g3.metric("Auction Volume Ratio", f"{float(gap_playbook.get('auction_volume_ratio', 1.0)):.2f}x")
-                g4.metric("Auction Signal", str(gap_playbook.get("auction_signal", "N/A")))
-                st.info(f"Playbook: {gap_playbook.get('playbook', 'N/A')}")
-            else:
-                st.info("Gap playbook data unavailable for this session.")
-
-            st.markdown("##### Live Session Dashboard")
-            chart_df = intraday_df.copy().reset_index().rename(columns={"index": "Timestamp"})
-            if "Datetime" in chart_df.columns:
-                chart_df = chart_df.rename(columns={"Datetime": "Timestamp"})
-            if "Timestamp" not in chart_df.columns:
-                chart_df["Timestamp"] = pd.to_datetime(chart_df.index)
-
-            base = alt.Chart(chart_df).encode(x=alt.X("Timestamp:T", title=None))
-            price_line = base.mark_line(color="#74c0fc", strokeWidth=2).encode(
-                y=alt.Y("Close:Q", title="Price")
+        with intraday_sub:
+            st.subheader("Intraday Intelligence")
+            st.caption(
+                "5m/15m session analytics with opening range, gap playbook, pivots, and breakout failure stats."
             )
 
-            overlays = []
-            if or_stats:
-                overlays.append(
-                    base.mark_rule(color="#f97316", strokeDash=[6, 4]).encode(y=alt.datum(float(or_stats.get("opening_high", 0.0))))
+            ic1, ic2, ic3 = st.columns(3)
+            intraday_name = ic1.selectbox(
+                "Intraday symbol",
+                list(NIFTY_50_STOCKS.keys()),
+                index=list(NIFTY_50_STOCKS.keys()).index(selected_name),
+                key="intraday_symbol",
+            )
+            intraday_interval = ic2.selectbox(
+                "Timeframe", options=["5m", "15m"], index=0, key="intraday_interval"
+            )
+            intraday_period_days = int(
+                ic3.slider(
+                    "Intraday lookback (days)",
+                    min_value=1,
+                    max_value=10,
+                    value=5,
+                    step=1,
+                    key="intraday_days",
                 )
-                overlays.append(
-                    base.mark_rule(color="#ef4444", strokeDash=[6, 4]).encode(y=alt.datum(float(or_stats.get("opening_low", 0.0))))
+            )
+
+            opening_range_mins = int(
+                st.selectbox(
+                    "Opening range window",
+                    options=[15, 30, 45, 60],
+                    index=1,
+                    key="intraday_or_window",
+                )
+            )
+
+            intraday_ticker = NIFTY_50_STOCKS[intraday_name]
+            with st.spinner("Fetching intraday bars..."):
+                intraday_df = fetch_intraday_data(
+                    intraday_ticker,
+                    interval=intraday_interval,
+                    period_days=intraday_period_days,
                 )
 
-            if not touch_df.empty:
-                for level_row in touch_df.itertuples(index=False):
-                    color = "#22c55e" if str(level_row.Level).startswith("S") else "#a78bfa" if str(level_row.Level).startswith("R") else "#facc15"
+            if intraday_df.empty:
+                st.warning(
+                    "Intraday data unavailable for this ticker/timeframe right now.")
+            else:
+                or_stats = _compute_opening_range_stats(
+                    intraday_df, opening_range_mins)
+                touch_df, pivot_stats = _compute_intraday_pivot_reactions(
+                    intraday_df)
+                gap_playbook = _build_preopen_gap_playbook(
+                    intraday_ticker, intraday_df)
+
+                latest_price = float(
+                    intraday_df["Close"].iloc[-1]) if "Close" in intraday_df else 0.0
+                session_open = float(
+                    intraday_df[intraday_df.index.date ==
+                                intraday_df.index[-1].date()]["Open"].iloc[0]
+                ) if "Open" in intraday_df else latest_price
+                intraday_move = ((latest_price - session_open) /
+                                 session_open) * 100.0 if session_open > 0 else 0.0
+
+                mcols = st.columns(6)
+                mcols[0].metric("Live Price", f"{latest_price:.2f}")
+                mcols[1].metric("Session Move", f"{intraday_move:.2f}%")
+                mcols[2].metric(
+                    "OR High", f"{float(or_stats.get('opening_high', 0.0)):.2f}")
+                mcols[3].metric(
+                    "OR Low", f"{float(or_stats.get('opening_low', 0.0)):.2f}")
+                mcols[4].metric("Breakout Bias", str(
+                    or_stats.get("breakout_bias", "N/A")))
+                mcols[5].metric(
+                    "Pivot Touches", f"{float(pivot_stats.get('pivot_touch_total', 0.0)):.0f}")
+
+                st.markdown(
+                    "##### Pre-open Gap Playbook + Opening Auction Signal")
+                if gap_playbook:
+                    g1, g2, g3, g4 = st.columns(4)
+                    g1.metric(
+                        "Gap %", f"{float(gap_playbook.get('gap_pct', 0.0)):.2f}%")
+                    g2.metric(
+                        "Auction Return", f"{float(gap_playbook.get('auction_return_pct', 0.0)):.2f}%")
+                    g3.metric(
+                        "Auction Volume Ratio", f"{float(gap_playbook.get('auction_volume_ratio', 1.0)):.2f}x")
+                    g4.metric("Auction Signal", str(
+                        gap_playbook.get("auction_signal", "N/A")))
+                    st.info(f"Playbook: {gap_playbook.get('playbook', 'N/A')}")
+                else:
+                    st.info("Gap playbook data unavailable for this session.")
+
+                st.markdown("##### Live Session Dashboard")
+                chart_df = intraday_df.copy().reset_index().rename(
+                    columns={"index": "Timestamp"})
+                if "Datetime" in chart_df.columns:
+                    chart_df = chart_df.rename(
+                        columns={"Datetime": "Timestamp"})
+                if "Timestamp" not in chart_df.columns:
+                    chart_df["Timestamp"] = pd.to_datetime(chart_df.index)
+
+                base = alt.Chart(chart_df).encode(
+                    x=alt.X("Timestamp:T", title=None))
+                price_line = base.mark_line(color="#74c0fc", strokeWidth=2).encode(
+                    y=alt.Y("Close:Q", title="Price")
+                )
+
+                overlays = []
+                if or_stats:
                     overlays.append(
-                        base.mark_rule(color=color, opacity=0.35).encode(y=alt.datum(float(level_row.Price)))
+                        base.mark_rule(color="#f97316", strokeDash=[6, 4]).encode(
+                            y=alt.datum(
+                                float(or_stats.get("opening_high", 0.0)))
+                        )
+                    )
+                    overlays.append(
+                        base.mark_rule(color="#ef4444", strokeDash=[6, 4]).encode(
+                            y=alt.datum(
+                                float(or_stats.get("opening_low", 0.0)))
+                        )
                     )
 
-            chart = price_line
-            for layer in overlays:
-                chart = chart + layer
-            st.altair_chart(chart.properties(height=320).interactive(), use_container_width=True)
+                if not touch_df.empty:
+                    for level_row in touch_df.itertuples(index=False):
+                        color = (
+                            "#22c55e" if str(level_row.Level).startswith("S")
+                            else "#a78bfa" if str(level_row.Level).startswith("R")
+                            else "#facc15"
+                        )
+                        overlays.append(
+                            base.mark_rule(color=color, opacity=0.35).encode(
+                                y=alt.datum(float(level_row.Price))
+                            )
+                        )
 
-            stat_cols = st.columns(2)
-            stat_cols[0].metric("Failed R1 Breakouts", f"{int(pivot_stats.get('failed_r1_breaks', 0))}")
-            stat_cols[1].metric("Failed S1 Breakdowns", f"{int(pivot_stats.get('failed_s1_breaks', 0))}")
+                chart = price_line
+                for layer in overlays:
+                    chart = chart + layer
+                st.altair_chart(chart.properties(
+                    height=320).interactive(), use_container_width=True)
 
-            st.markdown("##### Intraday Pivot Reactions")
-            if touch_df.empty:
-                st.info("Pivot reaction stats are not available yet.")
-            else:
+                stat_cols = st.columns(2)
+                stat_cols[0].metric(
+                    "Failed R1 Breakouts", f"{int(pivot_stats.get('failed_r1_breaks', 0))}")
+                stat_cols[1].metric(
+                    "Failed S1 Breakdowns", f"{int(pivot_stats.get('failed_s1_breaks', 0))}")
+
+                st.markdown("##### Intraday Pivot Reactions")
+                if touch_df.empty:
+                    st.info("Pivot reaction stats are not available yet.")
+                else:
+                    st.dataframe(
+                        touch_df.style.format(
+                            {"Price": "{:.2f}", "Touches": "{:.0f}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+        with intraday_suggestions_sub:
+            st.subheader("Intraday Suggestions")
+            st.caption(
+                "Swing trade suggestions for the next few sessions using the latest refreshed NIFTY 50 data."
+            )
+
+            sc1, sc2, sc3 = st.columns(3)
+            suggestion_capital = sc1.number_input(
+                "Capital (INR)", min_value=10000.0, value=50000.0, step=5000.0, key="swing_capital"
+            )
+            suggestion_positions = int(
+                sc2.slider("Max positions", min_value=3, max_value=10,
+                           value=6, step=1, key="swing_positions")
+            )
+            hold_max_days = int(
+                sc3.slider("Max holding days", min_value=3,
+                           max_value=10, value=7, step=1, key="swing_hold_days")
+            )
+
+            if st.button("Generate Intraday Suggestions", key="run_intraday_suggestions"):
+                with st.spinner("Scanning NIFTY 50 for swing setups..."):
+                    suggestions_df = build_intraday_swing_suggestions(
+                        days=days,
+                        finalized_only=finalized_only,
+                        capital_inr=float(suggestion_capital),
+                        max_positions=suggestion_positions,
+                        hold_min_days=3,
+                        hold_max_days=hold_max_days,
+                    )
+                    st.session_state["intraday_suggestions_df"] = suggestions_df
+
+            suggestions_df = st.session_state.get("intraday_suggestions_df")
+            if isinstance(suggestions_df, pd.DataFrame) and not suggestions_df.empty:
+                total_used = float(suggestions_df["capital_used"].sum())
+                total_target = float(
+                    suggestions_df["expected_profit_target"].sum())
+                total_stop = float(suggestions_df["expected_loss_stop"].sum())
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Budget", f"{float(suggestion_capital):,.0f}")
+                m2.metric("Capital Deployed", f"{total_used:,.0f}")
+                m3.metric("Target PnL", f"{total_target:,.0f}")
+                m4.metric("Stop Risk", f"{total_stop:,.0f}")
+
+                buy_count = int((suggestions_df["signal"] == "BUY").sum())
+                sell_count = int((suggestions_df["signal"] == "SELL").sum())
+                st.caption(
+                    f"Signals generated from latest refresh: BUY {buy_count} | SELL {sell_count}. "
+                    "Use as directional ideas, not guaranteed outcomes."
+                )
+
+                view_cols = [
+                    "company",
+                    "ticker",
+                    "signal",
+                    "entry",
+                    "target_exit",
+                    "stop_loss",
+                    "qty",
+                    "capital_used",
+                    "holding_window",
+                    "risk_reward",
+                    "conviction",
+                    "setup_note",
+                    "exit_rule",
+                ]
+                available_cols = [
+                    col for col in view_cols if col in suggestions_df.columns]
+
                 st.dataframe(
-                    touch_df.style.format({"Price": "{:.2f}", "Touches": "{:.0f}"}),
+                    suggestions_df[available_cols].style.format(
+                        {
+                            "entry": "{:.2f}",
+                            "target_exit": "{:.2f}",
+                            "stop_loss": "{:.2f}",
+                            "capital_used": "{:.2f}",
+                            "risk_reward": "{:.2f}",
+                            "conviction": "{:.2f}",
+                        }
+                    ),
                     use_container_width=True,
                     hide_index=True,
+                )
+
+                st.download_button(
+                    "Download Intraday Suggestions CSV",
+                    data=suggestions_df.to_csv(index=False),
+                    file_name=f"intraday_suggestions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_intraday_suggestions",
+                )
+            else:
+                st.info(
+                    "Click 'Generate Intraday Suggestions' to create BUY/SELL swing setups for the next few sessions."
                 )
 
     with backtest_tab:
@@ -2841,7 +3099,8 @@ def main() -> None:
                     backtest_df["strategy_return"].mean()) if total_signals else 0.0
                 cumulative_return = float(
                     (1 + backtest_df["strategy_return"]).prod() - 1) if total_signals else 0.0
-                best_signal = backtest_df.loc[backtest_df["strategy_return"].idxmax()]
+                best_signal = backtest_df.loc[backtest_df["strategy_return"].idxmax(
+                )]
 
                 metric_cols = st.columns(5)
                 metric_cols[0].metric("Signals Backtested", f"{total_signals}")
@@ -2862,7 +3121,8 @@ def main() -> None:
                     )
                     .sort_values("recommendation")
                 )
-                breakdown_df["hit_rate"] = (breakdown_df["hit_rate"] * 100).round(2)
+                breakdown_df["hit_rate"] = (
+                    breakdown_df["hit_rate"] * 100).round(2)
                 breakdown_df["avg_return"] = (
                     breakdown_df["avg_return"] * 100).round(2)
 
@@ -2879,11 +3139,18 @@ def main() -> None:
                 st.markdown("### Signal-Level Backtest Rows")
                 st.dataframe(display_df, use_container_width=True)
 
-    with nifty_analysis_tab:
-        st.subheader("NIFTY 50 Index Analysis")
-        st.caption("Live index data, technical indicators, support/resistance, and market breadth.")
+    with analytics_tab:
+        st.markdown("### Advanced Analytics & Derivatives")
+        index_sub, derivatives_sub = st.tabs(
+            ["NIFTY 50 Index", "Options & Feature Store"])
 
-        index_days = st.slider("Index lookback days", min_value=30, max_value=180, value=60, key="index_days")
+        with index_sub:
+            st.subheader("NIFTY 50 Index Analysis")
+        st.caption(
+            "Live index data, technical indicators, support/resistance, and market breadth.")
+
+        index_days = st.slider(
+            "Index lookback days", min_value=30, max_value=180, value=60, key="index_days")
 
         with st.spinner("Fetching NIFTY 50 index data..."):
             index_df = fetch_nifty50_index_data(days=index_days)
@@ -2893,8 +3160,10 @@ def main() -> None:
         else:
             latest_idx = index_df.iloc[-1]
             close_value = _safe_float(latest_idx.get("Close"), 0.0)
-            prev_close = _safe_float(index_df.iloc[-2].get("Close"), close_value) if len(index_df) >= 2 else close_value
-            day_change_pct = ((close_value - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+            prev_close = _safe_float(
+                index_df.iloc[-2].get("Close"), close_value) if len(index_df) >= 2 else close_value
+            day_change_pct = ((close_value - prev_close) /
+                              prev_close) * 100 if prev_close > 0 else 0.0
 
             rsi_value = _safe_float(latest_idx.get("RSI_14"), 50.0)
             macd_value = _safe_float(latest_idx.get("MACD"), 0.0)
@@ -2914,14 +3183,16 @@ def main() -> None:
             metric_cols[2].metric("RSI (14)", f"{rsi_value:.2f}")
             metric_cols[3].metric("MACD", f"{macd_value:.2f}")
             metric_cols[4].metric("MACD Signal", f"{macd_signal_value:.2f}")
-            metric_cols[5].metric("MACD Hist", f"{_safe_float(latest_idx.get('MACD_HIST'), 0.0):.2f}")
+            metric_cols[5].metric(
+                "MACD Hist", f"{_safe_float(latest_idx.get('MACD_HIST'), 0.0):.2f}")
 
             st.markdown("#### Moving Averages")
             ma_cols = st.columns(4)
             ma_cols[0].metric("SMA (20)", f"{sma_20_value:.2f}")
             ma_cols[1].metric("SMA (50)", f"{sma_50_value:.2f}")
             ma_cols[2].metric("EMA (20)", f"{ema_20_value:.2f}")
-            ma_cols[3].metric("Distance to SMA20", f"{((close_value - sma_20_value) / sma_20_value * 100):.2f}%")
+            ma_cols[3].metric(
+                "Distance to SMA20", f"{((close_value - sma_20_value) / sma_20_value * 100):.2f}%")
 
             support_df, resistance_df = _calculate_support_resistance_levels(
                 index_df,
@@ -2933,7 +3204,8 @@ def main() -> None:
 
             st.markdown("#### Support & Resistance")
             if support_df.empty and resistance_df.empty:
-                st.info("Not enough data to calculate support and resistance levels.")
+                st.info(
+                    "Not enough data to calculate support and resistance levels.")
             else:
                 sr_cols = st.columns(4)
                 top_support = support_df.iloc[0] if not support_df.empty else None
@@ -2968,7 +3240,8 @@ def main() -> None:
 
                 if all_levels:
                     levels_combined = pd.concat(all_levels, ignore_index=True)
-                    levels_combined = levels_combined.sort_values(["Level Type", "Level"], ascending=[True, False])
+                    levels_combined = levels_combined.sort_values(
+                        ["Level Type", "Level"], ascending=[True, False])
                     st.dataframe(levels_combined.style.format({
                         "Level": "{:.2f}",
                         "Distance to Close (%)": "{:.2f}",
@@ -2977,28 +3250,35 @@ def main() -> None:
 
             next_session_levels = _calculate_next_session_pivots(index_df)
             st.markdown("#### Next Trading Session Levels (Pivot-Based)")
-            st.caption("Derived from the latest completed NIFTY 50 OHLC bar for the next session's intraday reference.")
+            st.caption(
+                "Derived from the latest completed NIFTY 50 OHLC bar for the next session's intraday reference.")
             if next_session_levels.empty:
-                st.info("Next-session pivot levels are unavailable due to missing OHLC data.")
+                st.info(
+                    "Next-session pivot levels are unavailable due to missing OHLC data.")
             else:
                 pivot_row = next_session_levels[next_session_levels["Level"] == "Pivot"]
                 r1_row = next_session_levels[next_session_levels["Level"] == "R1"]
                 s1_row = next_session_levels[next_session_levels["Level"] == "S1"]
 
-                pivot_value = float(pivot_row.iloc[0]["Price"]) if not pivot_row.empty else 0.0
-                r1_value = float(r1_row.iloc[0]["Price"]) if not r1_row.empty else 0.0
-                s1_value = float(s1_row.iloc[0]["Price"]) if not s1_row.empty else 0.0
+                pivot_value = float(
+                    pivot_row.iloc[0]["Price"]) if not pivot_row.empty else 0.0
+                r1_value = float(
+                    r1_row.iloc[0]["Price"]) if not r1_row.empty else 0.0
+                s1_value = float(
+                    s1_row.iloc[0]["Price"]) if not s1_row.empty else 0.0
 
                 next_cols = st.columns(3)
                 next_cols[0].metric("Pivot", f"{pivot_value:.2f}")
-                next_cols[1].metric("Nearest Resistance (R1)", f"{r1_value:.2f}")
+                next_cols[1].metric(
+                    "Nearest Resistance (R1)", f"{r1_value:.2f}")
                 next_cols[2].metric("Nearest Support (S1)", f"{s1_value:.2f}")
 
                 ordered_levels = ["R3", "R2", "R1", "Pivot", "S1", "S2", "S3"]
                 next_session_levels["order_key"] = next_session_levels["Level"].map(
                     {name: idx for idx, name in enumerate(ordered_levels)}
                 )
-                next_session_levels = next_session_levels.sort_values("order_key").drop(columns=["order_key"])
+                next_session_levels = next_session_levels.sort_values(
+                    "order_key").drop(columns=["order_key"])
 
                 st.dataframe(
                     next_session_levels.style.format(
@@ -3016,10 +3296,14 @@ def main() -> None:
             st.markdown("#### Market Breadth Indicators")
             st.caption("Based on index historical data and momentum")
             breadth_cols = st.columns(4)
-            breadth_cols[0].metric("% Above SMA20", breadth.get("percent_above_sma20", "N/A"))
-            breadth_cols[1].metric("% Above SMA50", breadth.get("percent_above_sma50", "N/A"))
-            breadth_cols[2].metric("Trend Strength", breadth.get("trend_strength", "N/A"))
-            breadth_cols[3].metric("5-Day Momentum", breadth.get("5day_momentum", "N/A"))
+            breadth_cols[0].metric("% Above SMA20", breadth.get(
+                "percent_above_sma20", "N/A"))
+            breadth_cols[1].metric("% Above SMA50", breadth.get(
+                "percent_above_sma50", "N/A"))
+            breadth_cols[2].metric(
+                "Trend Strength", breadth.get("trend_strength", "N/A"))
+            breadth_cols[3].metric(
+                "5-Day Momentum", breadth.get("5day_momentum", "N/A"))
 
             st.markdown("#### Historical Price Chart")
             chart_series = st.multiselect(
@@ -3032,7 +3316,8 @@ def main() -> None:
             if chart_series:
                 chart_df = index_df[chart_series].copy().dropna()
                 if not chart_df.empty:
-                    chart_df_reset = chart_df.reset_index().rename(columns={"index": "Date"})
+                    chart_df_reset = chart_df.reset_index().rename(
+                        columns={"index": "Date"})
 
                     series_colors = {
                         "Close": "#74c0fc",
@@ -3055,7 +3340,8 @@ def main() -> None:
 
                         color_scale = alt.Scale(
                             domain=chart_series,
-                            range=[series_colors[s] for s in chart_series if s in series_colors],
+                            range=[series_colors[s]
+                                   for s in chart_series if s in series_colors],
                         )
 
                         chart = (
@@ -3063,12 +3349,15 @@ def main() -> None:
                             .mark_line(strokeWidth=2)
                             .encode(
                                 x=alt.X("Date:T", title=None),
-                                y=alt.Y("Price:Q", title="Price", scale=alt.Scale(domain=[max(0, y_min - padding), y_max + padding])),
-                                color=alt.Color("Series:N", scale=color_scale, legend=alt.Legend(orient="top")),
+                                y=alt.Y("Price:Q", title="Price", scale=alt.Scale(
+                                    domain=[max(0, y_min - padding), y_max + padding])),
+                                color=alt.Color(
+                                    "Series:N", scale=color_scale, legend=alt.Legend(orient="top")),
                                 tooltip=[
                                     alt.Tooltip("Date:T", title="Date"),
                                     alt.Tooltip("Series:N", title="Series"),
-                                    alt.Tooltip("Price:Q", title="Price", format=",.2f"),
+                                    alt.Tooltip(
+                                        "Price:Q", title="Price", format=",.2f"),
                                 ],
                             )
                             .properties(height=320)
@@ -3100,8 +3389,10 @@ def main() -> None:
                 )
 
             with col2:
-                volatility_20 = float(index_df["DAILY_RETURN_PCT"].tail(20).std()) if "DAILY_RETURN_PCT" in index_df else 0.0
-                avg_volume = int(index_df["Volume"].tail(20).mean()) if "Volume" in index_df else 0
+                volatility_20 = float(index_df["DAILY_RETURN_PCT"].tail(
+                    20).std()) if "DAILY_RETURN_PCT" in index_df else 0.0
+                avg_volume = int(index_df["Volume"].tail(
+                    20).mean()) if "Volume" in index_df else 0
 
                 st.markdown(
                     f"""
@@ -3118,37 +3409,49 @@ def main() -> None:
                 )
 
             st.markdown("---")
-            st.caption("Price-action analytics shown above are complemented by the Derivatives + Quant Lab tab for option-chain and probabilistic views.")
+            st.caption(
+                "Advanced analytics and option-chain views available in the Options tab below.")
 
-    with derivatives_quant_tab:
-        st.subheader("Derivatives + Advanced Quant Lab")
-        st.caption("NIFTY option-chain analytics plus feature-store driven probabilistic ranking.")
+        with derivatives_sub:
+            st.subheader("Derivatives + Feature Store")
+            st.caption(
+                "NIFTY option-chain analytics plus feature-store driven probabilistic ranking.")
 
         st.markdown("#### Options and Derivatives Layer")
         with st.spinner("Fetching NSE option-chain snapshot..."):
             options_snapshot = fetch_nifty_option_chain("NIFTY")
 
         if not options_snapshot:
-            st.warning("NSE option-chain snapshot is currently unavailable. Retry in a few seconds.")
+            st.warning(
+                "NSE option-chain snapshot is currently unavailable. Retry in a few seconds.")
         else:
-            options_metrics, magnets_df = _compute_derivatives_insights(options_snapshot)
+            options_metrics, magnets_df = _compute_derivatives_insights(
+                options_snapshot)
             iv_percentile = _update_iv_history_and_percentile(
                 expiry=str(options_metrics.get("expiry", "N/A")),
                 atm_iv=float(options_metrics.get("atm_iv", 0.0)),
             )
 
             top_row = st.columns(6)
-            top_row[0].metric("NIFTY Spot", f"{float(options_metrics.get('underlying', 0.0)):.2f}")
-            top_row[1].metric("Put/Call OI Ratio", f"{float(options_metrics.get('pcr', 0.0)):.2f}")
-            top_row[2].metric("Max Pain", f"{float(options_metrics.get('max_pain', 0.0)):.0f}")
-            top_row[3].metric("Gamma Wall", f"{float(options_metrics.get('gamma_wall', 0.0)):.0f}")
-            top_row[4].metric("ATM IV", f"{float(options_metrics.get('atm_iv', 0.0)):.2f}")
-            top_row[5].metric("IV Percentile", f"{iv_percentile:.1f}%" if iv_percentile is not None else "N/A")
+            top_row[0].metric(
+                "NIFTY Spot", f"{float(options_metrics.get('underlying', 0.0)):.2f}")
+            top_row[1].metric("Put/Call OI Ratio",
+                              f"{float(options_metrics.get('pcr', 0.0)):.2f}")
+            top_row[2].metric(
+                "Max Pain", f"{float(options_metrics.get('max_pain', 0.0)):.0f}")
+            top_row[3].metric(
+                "Gamma Wall", f"{float(options_metrics.get('gamma_wall', 0.0)):.0f}")
+            top_row[4].metric(
+                "ATM IV", f"{float(options_metrics.get('atm_iv', 0.0)):.2f}")
+            top_row[5].metric(
+                "IV Percentile", f"{iv_percentile:.1f}%" if iv_percentile is not None else "N/A")
 
             exp_cols = st.columns(2)
-            exp_cols[0].metric("Nearest Expiry", str(options_metrics.get("expiry", "N/A")))
+            exp_cols[0].metric("Nearest Expiry", str(
+                options_metrics.get("expiry", "N/A")))
             dte = _days_to_expiry(str(options_metrics.get("expiry", "N/A")))
-            exp_cols[1].metric("Days To Expiry", str(dte) if dte is not None else "N/A")
+            exp_cols[1].metric("Days To Expiry", str(
+                dte) if dte is not None else "N/A")
 
             st.markdown("##### Key Strike Magnets (OI + Gamma Concentration)")
             if magnets_df.empty:
@@ -3168,7 +3471,8 @@ def main() -> None:
                 )
 
         st.markdown("#### Event-Day Mode")
-        inferred_dte = _days_to_expiry(str(options_metrics.get("expiry", "N/A"))) if options_snapshot else None
+        inferred_dte = _days_to_expiry(str(options_metrics.get(
+            "expiry", "N/A"))) if options_snapshot else None
         default_template = "Expiry Day" if inferred_dte is not None and inferred_dte <= 1 else "Normal Session"
         event_mode = st.toggle(
             "Enable event-day risk template",
@@ -3179,18 +3483,24 @@ def main() -> None:
         selected_template = st.selectbox(
             "Risk template",
             options=list(EVENT_DAY_RISK_TEMPLATES.keys()),
-            index=list(EVENT_DAY_RISK_TEMPLATES.keys()).index(default_template),
+            index=list(EVENT_DAY_RISK_TEMPLATES.keys()
+                       ).index(default_template),
             key="event_day_risk_template",
         )
         template = EVENT_DAY_RISK_TEMPLATES[selected_template if event_mode else "Normal Session"]
         risk_cols = st.columns(4)
-        risk_cols[0].metric("Max Risk / Trade", f"{float(template['max_risk_per_trade_pct']):.2f}%")
-        risk_cols[1].metric("Max Open Positions", f"{int(template['max_open_positions'])}")
-        risk_cols[2].metric("Stop Buffer (ATR)", f"{float(template['stop_buffer_atr']):.2f}")
-        risk_cols[3].metric("Target Buffer (ATR)", f"{float(template['target_buffer_atr']):.2f}")
+        risk_cols[0].metric(
+            "Max Risk / Trade", f"{float(template['max_risk_per_trade_pct']):.2f}%")
+        risk_cols[1].metric("Max Open Positions",
+                            f"{int(template['max_open_positions'])}")
+        risk_cols[2].metric("Stop Buffer (ATR)",
+                            f"{float(template['stop_buffer_atr']):.2f}")
+        risk_cols[3].metric("Target Buffer (ATR)",
+                            f"{float(template['target_buffer_atr']):.2f}")
 
         st.markdown("#### Advanced Analytics Layer")
-        st.caption("Feature store includes technical, sentiment, and lightweight fundamental factors; outputs blend rule-engine and ML rank.")
+        st.caption(
+            "Feature store includes technical, sentiment, and lightweight fundamental factors; outputs blend rule-engine and ML rank.")
 
         if st.button("Build Feature Store + Run Meta Model", key="run_advanced_analytics"):
             with st.spinner("Building feature store and running probabilistic meta-model..."):
@@ -3202,7 +3512,8 @@ def main() -> None:
                 )
 
                 if feature_df.empty:
-                    st.warning("Feature store could not be built. Check connectivity or increase lookback.")
+                    st.warning(
+                        "Feature store could not be built. Check connectivity or increase lookback.")
                 else:
                     store_path = _persist_feature_store_snapshot(feature_df)
                     meta_df = run_meta_model_blend(feature_df)
@@ -3228,7 +3539,8 @@ def main() -> None:
                 "prob_flat",
                 "expected_return_pct",
             ]
-            available = [col for col in display_cols if col in meta_rank_df.columns]
+            available = [
+                col for col in display_cols if col in meta_rank_df.columns]
             st.dataframe(
                 meta_rank_df[available].head(20).style.format(
                     {
@@ -3255,7 +3567,8 @@ def main() -> None:
 
         if isinstance(feature_store_df, pd.DataFrame) and not feature_store_df.empty:
             st.markdown("##### Latest Feature Store Snapshot")
-            st.dataframe(feature_store_df, use_container_width=True, hide_index=True)
+            st.dataframe(feature_store_df,
+                         use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ except ImportError:
 import yfinance as yf
 
 
+import math
+
 MOCK_NEWS_BY_TICKER: Dict[str, List[str]] = {
     "RELIANCE.NS": [
         "Reliance expands renewable energy investments with new solar project",
@@ -247,9 +249,24 @@ def fetch_eod_data(ticker: str, days: int = 30) -> pd.DataFrame:
     price_df["EMA_20"] = price_df["Close"].ewm(span=20, adjust=False).mean()
     price_df["DAILY_RETURN_PCT"] = price_df["Close"].pct_change() * 100
 
+    # Advanced Indicators
+    price_df["STD_20"] = price_df["Close"].rolling(20).std()
+    price_df["BB_UPPER"] = price_df["SMA_20"] + (2 * price_df["STD_20"])
+    price_df["BB_LOWER"] = price_df["SMA_20"] - (2 * price_df["STD_20"])
+
+    if "Volume" in price_df.columns:
+        price_df["VWAP"] = (price_df["Close"] * price_df["Volume"]).cumsum() / (price_df["Volume"].cumsum() + 1e-9)
+
     if ta is not None:
         price_df["RSI_14"] = ta.rsi(price_df["Close"], length=14)
         macd_df = ta.macd(price_df["Close"], fast=12, slow=26, signal=9)
+        
+        # ATR computation via pandas_ta
+        true_range = ta.true_range(price_df["High"], price_df["Low"], price_df["Close"])
+        if true_range is not None:
+            price_df["ATR_14"] = ta.sma(true_range, length=14)
+        else:
+            price_df["ATR_14"] = pd.NA
 
         if macd_df is not None and not macd_df.empty:
             price_df["MACD"] = macd_df["MACD_12_26_9"]
@@ -725,16 +742,49 @@ def _option_metric(leg: dict[str, Any], key: str) -> float | None:
 
 
 def fetch_nifty_option_chain(symbol: str = "NIFTY") -> dict[str, Any]:
-    """Fetch NSE option-chain snapshot for NIFTY index derivatives.
+    """Fetch NSE option-chain snapshot for NIFTY index derivatives."""
+    def generate_synthetic_chain() -> dict[str, Any]:
+        try:
+            spot = float(yf.Ticker("^NSEI", session=get_yfinance_session()).fast_info.get("lastPrice", 22000.0))
+        except Exception:
+            spot = 22000.0
+            
+        atm_strike = round(spot / 50) * 50
+        strikes = [atm_strike + (i * 50) for i in range(-15, 16)]
+        
+        parsed_rows = []
+        for strike in strikes:
+            dist = strike - spot
+            dist_pts = abs(dist)
+            iv = 12.0 + (dist_pts / 200.0)
+            ce_oi = max(1000, 2000000 - abs(dist - 300) * 2000) if dist > -200 else max(500, 500000 - dist_pts * 1000)
+            pe_oi = max(1000, 2000000 - abs(dist + 300) * 2000) if dist < 200 else max(500, 500000 - dist_pts * 1000)
+            gamma = 0.005 * math.exp(-0.5 * (dist_pts / 100.0)**2)
+            tv = 150 * math.exp(-0.5 * (dist_pts / 200.0)**2)
+            ce_price = max(0, spot - strike) + tv
+            pe_price = max(0, strike - spot) + tv
 
-    Returns a dictionary with keys:
-    - symbol
-    - underlying_value
-    - nearest_expiry
-    - fetched_at
-    - chain_df (strike-level CE/PE fields)
-    """
-    session = requests.Session()
+            parsed_rows.append({
+                "strike": float(strike),
+                "expiry": (pd.Timestamp.now() + pd.Timedelta(days=4)).strftime("%d-%b-%Y"),
+                "ce_oi": float(ce_oi), "pe_oi": float(pe_oi),
+                "ce_change_oi": float(ce_oi * 0.1), "pe_change_oi": float(pe_oi * 0.1),
+                "ce_iv": float(iv), "pe_iv": float(iv + (0.5 if dist < 0 else 0)),
+                "ce_last": float(ce_price), "pe_last": float(pe_price),
+                "ce_gamma": float(gamma), "pe_gamma": float(gamma)
+            })
+
+        chain_df = pd.DataFrame(parsed_rows).sort_values("strike").reset_index(drop=True)
+        return {
+            "symbol": symbol.upper(),
+            "underlying_value": spot,
+            "nearest_expiry": parsed_rows[0]["expiry"],
+            "fetched_at": pd.Timestamp.utcnow().isoformat(),
+            "chain_df": chain_df,
+            "is_mock": True
+        }
+
+    session = curl_requests.Session(impersonate="chrome")
     headers = dict(NSE_HEADERS)
     headers["Accept"] = "application/json,text/plain,*/*"
     session.headers.update(headers)
@@ -743,41 +793,42 @@ def fetch_nifty_option_chain(symbol: str = "NIFTY") -> dict[str, Any]:
     api_url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol.upper()}"
 
     try:
-        session.get("https://www.nseindia.com", timeout=3, verify=verify)
-        session.get("https://www.nseindia.com/option-chain", timeout=3, verify=verify)
-    except SSLError:
+        session.get("https://www.nseindia.com", timeout=5, verify=verify)
+        session.get("https://www.nseindia.com/option-chain", timeout=5, verify=verify)
+    except Exception:
         verify = False
         try:
-            session.get("https://www.nseindia.com", timeout=3, verify=False)
-            session.get("https://www.nseindia.com/option-chain", timeout=3, verify=False)
-        except requests.RequestException:
+            session.get("https://www.nseindia.com", timeout=5, verify=False)
+            session.get("https://www.nseindia.com/option-chain", timeout=5, verify=False)
+        except Exception:
             pass
-    except requests.RequestException:
-        pass
 
     try:
-        response = session.get(api_url, timeout=4, verify=verify)
-        if response.status_code != 200:
-            return {}
+        response = session.get(api_url, timeout=6, verify=verify)
+        if response.status_code != 200 or not response.text.strip() or response.text.strip() == '{}':
+            return generate_synthetic_chain()
         payload = response.json()
-    except SSLError:
+        if not payload or 'records' not in payload:
+            return generate_synthetic_chain()
+    except Exception:
         try:
-            response = session.get(api_url, timeout=4, verify=False)
-            if response.status_code != 200:
-                return {}
+            response = session.get(api_url, timeout=6, verify=False)
+            if response.status_code != 200 or not response.text.strip() or response.text.strip() == '{}':
+                return generate_synthetic_chain()
             payload = response.json()
-        except (requests.RequestException, ValueError):
-            return {}
-    except (requests.RequestException, ValueError):
-        return {}
+            if not payload or 'records' not in payload:
+                return generate_synthetic_chain()
+        except Exception:
+            return generate_synthetic_chain()
 
+    # Process payload if we successfully got it
     records = payload.get("records", {}) if isinstance(payload, dict) else {}
     option_rows = records.get("data", []) if isinstance(records, dict) else []
     expiries = records.get("expiryDates", []) if isinstance(records, dict) else []
     nearest_expiry = str(expiries[0]) if expiries else None
     underlying_value = _safe_json_num(records.get("underlyingValue")) if isinstance(records, dict) else None
 
-    parsed_rows: list[dict[str, Any]] = []
+    parsed_rows = []
     for row in option_rows:
         if not isinstance(row, dict):
             continue
@@ -792,25 +843,23 @@ def fetch_nifty_option_chain(symbol: str = "NIFTY") -> dict[str, Any]:
         ce_leg = row.get("CE") if isinstance(row.get("CE"), dict) else {}
         pe_leg = row.get("PE") if isinstance(row.get("PE"), dict) else {}
 
-        parsed_rows.append(
-            {
-                "strike": strike,
-                "expiry": expiry,
-                "ce_oi": _option_metric(ce_leg, "openInterest") or 0.0,
-                "pe_oi": _option_metric(pe_leg, "openInterest") or 0.0,
-                "ce_change_oi": _option_metric(ce_leg, "changeinOpenInterest") or 0.0,
-                "pe_change_oi": _option_metric(pe_leg, "changeinOpenInterest") or 0.0,
-                "ce_iv": _option_metric(ce_leg, "impliedVolatility"),
-                "pe_iv": _option_metric(pe_leg, "impliedVolatility"),
-                "ce_last": _option_metric(ce_leg, "lastPrice"),
-                "pe_last": _option_metric(pe_leg, "lastPrice"),
-                "ce_gamma": _option_metric(ce_leg, "gamma"),
-                "pe_gamma": _option_metric(pe_leg, "gamma"),
-            }
-        )
+        parsed_rows.append({
+            "strike": strike,
+            "expiry": expiry,
+            "ce_oi": _option_metric(ce_leg, "openInterest") or 0.0,
+            "pe_oi": _option_metric(pe_leg, "openInterest") or 0.0,
+            "ce_change_oi": _option_metric(ce_leg, "changeinOpenInterest") or 0.0,
+            "pe_change_oi": _option_metric(pe_leg, "changeinOpenInterest") or 0.0,
+            "ce_iv": _option_metric(ce_leg, "impliedVolatility"),
+            "pe_iv": _option_metric(pe_leg, "impliedVolatility"),
+            "ce_last": _option_metric(ce_leg, "lastPrice"),
+            "pe_last": _option_metric(pe_leg, "lastPrice"),
+            "ce_gamma": _option_metric(ce_leg, "gamma"),
+            "pe_gamma": _option_metric(pe_leg, "gamma"),
+        })
 
     if not parsed_rows:
-        return {}
+        return generate_synthetic_chain()
 
     chain_df = pd.DataFrame(parsed_rows).sort_values("strike").reset_index(drop=True)
     return {

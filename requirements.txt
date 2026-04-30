@@ -5,3 +5,4 @@ pandas-ta>=0.3.14b; python_version < "3.14"
 feedparser>=6.0.11
 vaderSentiment>=3.3.2
 requests>=2.31.0
+plotly>=5.21.0

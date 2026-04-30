@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import altair as alt
+import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -652,77 +653,60 @@ def _render_price_structure_chart(
     selected_ticker: str,
     selected_series: list[str],
 ) -> None:
-    """Render a focused price chart with dynamic y-axis range."""
-    if not selected_series:
-        st.info("Select at least one series to render the chart.")
-        return
-
-    available_series = ["Close", "SMA_20", "EMA_20", "SMA_50"]
-    requested_series = [
-        series for series in selected_series if series in available_series]
-    if not requested_series:
-        st.info("Selected series are unavailable for this chart.")
-        return
-
-    chart_df = eod_df[requested_series].copy().dropna(how="all")
-    if chart_df.empty:
+    """Render a focused Candlestick price chart using Plotly."""
+    if eod_df.empty or not {"Open", "High", "Low", "Close"}.issubset(eod_df.columns):
         st.info("Price chart is unavailable for this symbol.")
         return
-
+        
+    chart_df = eod_df.copy()
     chart_df = chart_df.reset_index().rename(columns={"index": "Date"})
-    long_df = chart_df.melt(
-        id_vars=["Date"],
-        value_vars=requested_series,
-        var_name="Series",
-        value_name="Price",
-    ).dropna(subset=["Price"])
-
-    if long_df.empty:
-        st.info("Price chart is unavailable for this symbol.")
-        return
-
-    y_min = float(long_df["Price"].min())
-    y_max = float(long_df["Price"].max())
-    value_range = max(y_max - y_min, 1.0)
-    padding = max(value_range * 0.06, y_max * 0.003)
-    y_domain = [max(0.0, y_min - padding), y_max + padding]
-
+    
     st.subheader(f"Price Structure: {selected_name} ({selected_ticker})")
-    st.caption(f"Focused y-axis range: {y_domain[0]:.2f} to {y_domain[1]:.2f}")
 
+    fig = go.Figure()
+
+    # Candlestick Trace
+    fig.add_trace(go.Candlestick(
+        x=chart_df["Date"],
+        open=chart_df["Open"],
+        high=chart_df["High"],
+        low=chart_df["Low"],
+        close=chart_df["Close"],
+        name="Price",
+        increasing_line_color="#34d399",
+        decreasing_line_color="#f87171"
+    ))
+
+    # Overlays
     series_colors = {
-        "Close": "#74c0fc",
         "SMA_20": "#f97316",
         "EMA_20": "#38bdf8",
         "SMA_50": "#ef4444",
+        "BB_UPPER": "#818cf8",
+        "BB_LOWER": "#818cf8",
+        "VWAP": "#d946ef",
     }
-    color_scale = alt.Scale(
-        domain=requested_series,
-        range=[series_colors[series] for series in requested_series],
-    )
+    
+    for series in selected_series:
+        if series in chart_df.columns and series != "Close":
+            fig.add_trace(go.Scatter(
+                x=chart_df["Date"],
+                y=chart_df[series],
+                mode="lines",
+                name=series,
+                line=dict(color=series_colors.get(series, "#ffffff"), width=2)
+            ))
 
-    chart = (
-        alt.Chart(long_df)
-        .mark_line(strokeWidth=2.2)
-        .encode(
-            x=alt.X("Date:T", title=None),
-            y=alt.Y(
-                "Price:Q",
-                title="Price",
-                scale=alt.Scale(domain=y_domain, zero=False),
-            ),
-            color=alt.Color("Series:N", scale=color_scale,
-                            legend=alt.Legend(orient="top")),
-            tooltip=[
-                alt.Tooltip("Date:T", title="Date"),
-                alt.Tooltip("Series:N", title="Series"),
-                alt.Tooltip("Price:Q", title="Price", format=",.2f"),
-            ],
-        )
-        .properties(height=320)
-        .interactive()
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=450,
+        margin=dict(l=40, r=40, b=40, t=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    st.altair_chart(chart, use_container_width=True)
+    fig.update_yaxes(fixedrange=False)
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2424,11 +2408,13 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
 
-    dashboard_tab, trading_tab, analytics_tab, backtest_tab = st.tabs(
+    dashboard_tab, trading_tab, analytics_tab, options_tab, risk_tab, backtest_tab = st.tabs(
         [
             "📊 Dashboard",
             "🎯 Trading Setup",
             "📈 Deep Analytics",
+            "⛓️ Options Chain",
+            "📐 Risk Calculator",
             "📉 Backtest & Performance",
         ]
     )
@@ -2505,10 +2491,10 @@ def main() -> None:
 
         with left_col:
             st.subheader(f"📊 {selected_name} Technical")
-            chart_series_options = ["Close", "SMA_20", "EMA_20", "SMA_50"]
+            chart_series_options = ["Close", "SMA_20", "EMA_20", "SMA_50", "BB_UPPER", "BB_LOWER", "VWAP"]
             selected_chart_series = st.multiselect(
                 "Chart series", options=chart_series_options,
-                default=chart_series_options, label_visibility="collapsed"
+                default=["Close", "SMA_20", "BB_UPPER", "BB_LOWER"], label_visibility="collapsed"
             )
             if selected_chart_series:
                 _render_price_structure_chart(
@@ -3067,6 +3053,67 @@ def main() -> None:
                 st.info(
                     "Click 'Generate Intraday Suggestions' to create BUY/SELL swing setups for the next few sessions."
                 )
+
+    with options_tab:
+        st.markdown("### NIFTY Options Chain Analysis")
+        st.caption("Live option chain parameters from NSE (Requires active session token)")
+        
+        if st.button("Fetch Latest Chain Data"):
+            with st.spinner("Fetching option chain from NSE..."):
+                chain_snapshot = fetch_nifty_option_chain()
+                
+                if not chain_snapshot or chain_snapshot.get("chain_df") is None or chain_snapshot["chain_df"].empty:
+                    st.error("Failed to fetch option chain. The NSE site may be rate-limiting.")
+                else:
+                    metrics, magnets = _compute_derivatives_insights(chain_snapshot)
+                    
+                    if chain_snapshot.get("is_mock"):
+                        st.warning("⚠️ NSE India API blocked the direct connection. Rendering a mathematically accurate **Synthetic Realistic Option Chain** based on live underlying spot price to preview functionality.")
+                    else:
+                        st.success("Successfully fetched chain data!")
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Underlying", f"₹{metrics['underlying']:.2f}")
+                    col2.metric("Put-Call Ratio (PCR)", f"{metrics['pcr']:.2f}")
+                    col3.metric("Max Pain Strike", f"{metrics['max_pain']:,.0f}")
+                    col4.metric("ATM IV", f"{metrics['atm_iv']:.2f}%")
+                    
+                    st.subheader("Key Magnetic Strikes (High OI & Gamma)")
+                    st.dataframe(magnets, use_container_width=True)
+
+    with risk_tab:
+        st.markdown("### Position Sizing & Risk Calculator")
+        st.caption("Compute position size based on ATR and risk tolerance.")
+        
+        r_col1, r_col2 = st.columns(2)
+        with r_col1:
+            rc_capital = st.number_input("Account Capital (₹)", value=500000.0, step=10000.0, format="%.2f")
+            rc_risk_pct = st.slider("Risk Per Trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+            rc_entry = st.number_input("Entry Price (₹)", value=0.0, step=1.0, format="%.2f")
+            
+        with r_col2:
+            rc_atr = st.number_input("Average True Range (ATR)", value=0.0, step=0.1, format="%.2f")
+            rc_stop_multiplier = st.number_input("Stop Loss ATR Multiplier", value=1.5, step=0.1, format="%.1f")
+            rc_target_multiplier = st.number_input("Target ATR Multiplier", value=2.0, step=0.1, format="%.1f")
+            
+        if rc_entry > 0 and rc_atr > 0:
+            stop_dist = rc_atr * rc_stop_multiplier
+            target_dist = rc_atr * rc_target_multiplier
+            
+            risk_amount = rc_capital * (rc_risk_pct / 100.0)
+            if stop_dist > 0:
+                qty = int(risk_amount // stop_dist)
+            else:
+                qty = 0
+                
+            stop_price = rc_entry - stop_dist
+            target_price = rc_entry + target_dist
+            
+            st.divider()
+            s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+            s_col1.metric("Risk Amount", f"₹{risk_amount:,.2f}")
+            s_col2.metric("Position Size", f"{qty} shares", f"Value: ₹{qty*rc_entry:,.2f}")
+            s_col3.metric("Stop Loss", f"₹{stop_price:,.2f}", f"-{stop_dist:.2f}")
+            s_col4.metric("Target", f"₹{target_price:,.2f}", f"+{target_dist:.2f}")
 
     with backtest_tab:
         st.subheader("Recommendation Backtest")

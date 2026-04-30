@@ -1,0 +1,2 @@
+timestamp,ticker,company_name,recommendation,confidence,combined_score,technical_score,sentiment_score,rsi_14,macd,macd_signal,headline_count,news_source
+2026-05-01T02:07:49,BEL.NS,Bharat Electronics,SELL,Low,-0.2971,-0.4354,0.0584,44.3273,1.1506,2.7563,5,Fallback
